@@ -194,10 +194,11 @@ class SmartTrashBin:
         
         # State management
         self.last_detection_time = 0
-        self.detection_cooldown = 5  # seconds between detections (increased for automatic mode)
+        self.detection_cooldown = 2  # Reduced for faster response
         self.current_item = None
         self.current_classifications = []  # Store all classifications
         self.processing_question = False
+        self.person_detected_time = None  # Track when person was detected for timing
         
         Logger.log_system_event("System fully initialized and ready!")
         print("\n" + "="*80)
@@ -205,6 +206,33 @@ class SmartTrashBin:
         print("="*80)
         print("Controls: 'q' to quit")
         print("="*80 + "\n")
+    
+    def select_best_frame(self, frames):
+        """
+        Select the best frame from multiple captures based on image quality
+        Uses Laplacian variance to measure focus/sharpness
+        """
+        if not frames or len(frames) == 0:
+            return None
+        
+        if len(frames) == 1:
+            return frames[0]
+        
+        best_frame = None
+        best_score = 0
+        
+        for frame in frames:
+            # Convert to grayscale for focus calculation
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Calculate Laplacian variance (higher = sharper/more focused)
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            
+            if laplacian_var > best_score:
+                best_score = laplacian_var
+                best_frame = frame
+        
+        Logger.log_system_event(f"Selected best frame from {len(frames)} captures (sharpness score: {best_score:.2f})")
+        return best_frame
     
     def process_detection(self, food_items, frame=None):
         """
@@ -247,19 +275,39 @@ class SmartTrashBin:
         Logger.log_classification_summary(classifications)
         
         # Only speak if trash items were found
+        # Helper function to get bin color
+        def get_bin_color(bin_type):
+            bin_type_lower = bin_type.lower()
+            if bin_type_lower == 'recycling':
+                return 'blue'
+            elif bin_type_lower == 'compost':
+                return 'green'
+            elif bin_type_lower == 'landfill':
+                return 'black or grey'
+            return bin_type
+        
+        # Calculate and log response time if person detection time was recorded
+        if self.person_detected_time is not None:
+            response_time = time.time() - self.person_detected_time
+            Logger.log_system_event(f"⏱️  RESPONSE TIME: {response_time:.2f} seconds (person detected → speaking)")
+            self.person_detected_time = None  # Reset after logging
+        
         if len(classifications) == 1:
-            # Single item
+            # Single item - natural, fast response
             item = classifications[0]
-            response = f"I see {item['item']}. This goes in the {item['bin_type'].upper()} bin. {item['explanation']}"
+            bin_color = get_bin_color(item['bin_type'])
+            # Use natural format: "item goes into bin_type bin usually color"
+            response = f"{item['item']} goes into {item['bin_type'].lower()} bin usually {bin_color}"
             Logger.log_tts_output(response)
             self.tts.speak(response)
         elif len(classifications) > 1:
-            # Multiple items - speak each one
+            # Multiple items - speak each one naturally
             for i, item in enumerate(classifications, 1):
-                response = f"{item['item']} goes in the {item['bin_type'].upper()} bin."
+                bin_color = get_bin_color(item['bin_type'])
+                response = f"{item['item']} goes into {item['bin_type'].lower()} bin usually {bin_color}"
                 Logger.log_tts_output(response)
                 self.tts.speak(response)
-                time.sleep(0.5)  # Small pause between items
+                time.sleep(0.3)  # Shorter pause for faster response
     
     
     def run(self):
@@ -315,17 +363,31 @@ class SmartTrashBin:
                     
                     # If person just appeared (wasn't there before) or enough time has passed
                     if person_detected and (not person_detected_last_frame or time_elapsed):
-                        Logger.log_system_event("Person detected! Capturing image and analyzing for trash...")
-                        # Take snapshot of current frame
-                        snapshot = frame.copy()
-                        # Convert BGR to RGB for PIL
-                        snapshot_rgb = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGB)
+                        # Record detection time for timing measurement
+                        self.person_detected_time = time.time()
+                        Logger.log_system_event("Person detected! Capturing 3 images to select best frame...")
                         
-                        # Analyze image for trash using Gemini Vision
-                        # Pass empty list since we're not using YOLOv8 for trash detection
-                        Logger.log_system_event("Sending image to Gemini Vision for trash analysis...")
-                        self.process_detection([], frame=snapshot_rgb)
-                        last_classification_time = current_time
+                        # Capture 3 frames with small delays for better selection
+                        captured_frames = []
+                        for i in range(3):
+                            ret, capture_frame = cap.read()
+                            if ret:
+                                capture_frame = cv2.flip(capture_frame, 1)
+                                captured_frames.append(capture_frame.copy())
+                                if i < 2:  # Don't sleep after last capture
+                                    time.sleep(0.1)  # Small delay between captures
+                        
+                        if captured_frames:
+                            # Select the best frame based on image quality
+                            best_frame = self.select_best_frame(captured_frames)
+                            if best_frame is not None:
+                                # Convert BGR to RGB for PIL
+                                snapshot_rgb = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
+                                
+                                # Analyze best image for trash using Gemini Vision
+                                Logger.log_system_event("Analyzing best image for trash analysis...")
+                                self.process_detection([], frame=snapshot_rgb)
+                                last_classification_time = current_time
                     
                     person_detected_last_frame = person_detected
                     

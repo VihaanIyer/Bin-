@@ -5,6 +5,7 @@ Determines which bin (recycling, compost, landfill) an item should go into
 
 import google.generativeai as genai
 import os
+import re
 from dotenv import load_dotenv
 from PIL import Image
 import io
@@ -127,72 +128,19 @@ class TrashClassifier:
         # Initialize for logging
         self.last_raw_response = ""
         
-        # System prompt for trash classification
-        self.system_prompt = """You are a smart trash bin assistant. Your job is to classify items into the correct waste bin with DEFINITIVE answers.
+        # System prompt - concise and fast but emphasizes visual analysis
+        self.system_prompt = """You are a waste classification expert. Analyze the IMAGE carefully to see the ACTUAL material, condition, and contamination level of each item.
 
-BIN COLORS AND RULES:
+BIN SYSTEM:
+- RECYCLING (blue): Clean recyclable materials
+  * Clean plastic items (forks, bottles, containers)
+  * Clean paper/cardboard
+  * Metal items (cans, utensils if clean)
+  * Glass
+- COMPOST (green): Organic food waste (fruit peels, food scraps, coffee grounds)
+- LANDFILL (black/grey): Contaminated items, non-recyclables, greasy items
 
-1. BLUE BIN - RECYCLING (The "bookworm" bin)
-   It loves:
-   - Paper
-   - Cardboard
-   - Magazines
-   - Cereal boxes
-   - Clean plastics (varies by city)
-   - Metal cans
-   - Glass
-   Avoid:
-   - Greasy pizza boxes
-   - Anything wet
-   - Plastic bags (usually)
-
-2. GREEN BIN - COMPOST/ORGANICS (The "nature kid" bin)
-   It eats:
-   - Food scraps
-   - Fruit and veggie peels
-   - Coffee grounds
-   - Tea bags
-   - Yard waste
-   Avoid:
-   - Plastic
-   - Meat or dairy in some city systems
-   - Anything non-biodegradable
-
-3. BLACK/GREY BIN - LANDFILL/TRASH (The "last resort" bin)
-   It swallows:
-   - Non-recyclables
-   - Styrofoam
-   - Plastic wrappers
-   - Broken mixed-material items
-   - Contaminated items
-
-IMPORTANT: Give DEFINITIVE answers. Say "This goes in [BIN]" or "This should go in [BIN]". Only use uncertain language like "typically" or "usually" if you genuinely cannot determine the correct bin."""
-        self.bin_context = ""
-        self.bin_layout_metadata = None
-    
-    def _ensure_pil_image(self, image):
-        """
-        Convert numpy arrays or file paths to PIL Images for Gemini API calls.
-        """
-        if image is None:
-            return None
-        
-        if isinstance(image, Image.Image):
-            return image
-        
-        # If it's a numpy array, convert from BGR (OpenCV) to RGB
-        if hasattr(image, 'shape'):
-            import numpy as np
-            if len(image.shape) == 3 and image.shape[2] == 3:
-                image_rgb = image[:, :, ::-1]
-                return Image.fromarray(image_rgb)
-            return Image.fromarray(image)
-        
-        # If it's a path-like object
-        if isinstance(image, str):
-            return Image.open(image)
-        
-        raise ValueError("Unsupported image format provided to Gemini classifier.")
+CRITICAL: Look at the IMAGE to determine if items are CLEAN or CONTAMINATED. A clean plastic fork goes in recycling. A dirty plastic fork with food goes in landfill. Analyze what you actually see."""
     
     def classify_item(self, item_name, context="", image=None):
         """
@@ -287,44 +235,47 @@ IMPORTANT: Give DEFINITIVE answers. Say "This goes in [BIN]" or "This should go 
             items_list = [item['class'] for item in detected_items]
             items_text = f"Note: YOLOv8 object detection suggested these items might be present: {', '.join(items_list)}. However, please look at the ACTUAL IMAGE and identify what trash/waste items are REALLY visible."
         
-        bin_context_text = ""
-        if self.bin_context:
-            bin_context_text = f"Facility bin labels previously identified: {self.bin_context}. Use these actual bin labels/types when describing where each item should go."
-        
-        prompt = f"""{self.system_prompt}
-
-{bin_context_text}
+        prompt = f"""EXAMINE THIS IMAGE CLOSELY. Look at each item's actual appearance, material, and condition. Classify based on what you SEE, not assumptions.
 
 {items_text}
 
-CRITICAL: Look at the ACTUAL IMAGE carefully. Ignore any incorrect detections. Identify ONLY trash/waste items that are ACTUALLY visible in the image. 
+BIN COLORS:
+- RECYCLING (blue): Clean recyclable materials
+  * Clean plastic items (forks, bottles, containers, cups) - NO food residue visible
+  * Clean paper/cardboard (plates, boxes) - NO grease or food stains
+  * Metal items (cans, utensils) - Clean, no contamination
+  * Glass bottles/jars - Clean
+- COMPOST (green): Organic food waste
+  * Food scraps, fruit peels, vegetables
+  * Coffee grounds, tea bags
+- LANDFILL (black/grey): Contaminated or non-recyclable items
+  * Items with visible food residue, grease, or contamination
+  * Greasy paper (pizza boxes with visible grease, napkins with food)
+  * Styrofoam, plastic wrappers
+  * Dirty/contaminated plastic items
 
-Focus on:
-- Items that are trash/waste (bottles, food, containers, paper, etc.)
-- Items held in hand or placed near the camera
-- Items that need to be disposed of
+CRITICAL - Look at the IMAGE to determine condition:
+- Plastic fork: Look at the image - is it CLEAN (no food visible) or DIRTY (food residue visible)?
+  * CLEAN plastic fork → RECYCLING (blue)
+  * DIRTY plastic fork with food → LANDFILL (black/grey)
+- Paper plate: Is it CLEAN or GREASY/with food?
+  * CLEAN paper plate → RECYCLING (blue)
+  * GREASY paper plate → LANDFILL (black/grey)
+- Bottles/cans: Are they CLEAN or CONTAMINATED?
+  * CLEAN → RECYCLING (blue)
+  * CONTAMINATED → LANDFILL (black/grey)
 
-IMPORTANT: Only identify items that are clearly trash/waste. Do NOT identify people, furniture, or other non-trash items. If you don't see any trash, respond with "No trash items found."
+RESPONSE FORMAT:
+- [item name] goes into [bin type] bin usually [color]
 
-For EACH trash item you ACTUALLY see in the image, determine which waste bin it should go into.
+Examples:
+- plastic fork (if clean in image) → "plastic fork goes into recycle bin usually blue"
+- plastic fork (if dirty in image) → "dirty plastic fork goes into landfill usually black"
+- pizza → "pizza goes into compost usually green"
+- clean paper plate → "paper plate goes into recycle usually blue"
+- greasy paper plate → "greasy paper plate goes into landfill usually black"
 
-IMPORTANT: List each item separately with its bin classification. Format your response like this:
-- [Item 1 name]: [BIN_TYPE] - [brief explanation]
-- [Item 2 name]: [BIN_TYPE] - [brief explanation]
-- [Item 3 name]: [BIN_TYPE] - [brief explanation]
-
-For example:
-- Plastic bottle: RECYCLING - This goes in the blue recycling bin. Clean plastic bottles are recyclable.
-- Pizza slice: COMPOST - This goes in the green compost bin. Food waste belongs in compost.
-- Paper plate: RECYCLING - This goes in the blue recycling bin. Clean paper can be recycled.
-- Napkin: COMPOST - This goes in the green compost bin. Paper napkins with food residue belong in compost.
-
-Consider for each item:
-- The material (plastic, paper, metal, organic, etc.)
-- The condition (clean, contaminated, has food residue, etc.)
-- The type of item
-
-List ALL trash/waste items you can ACTUALLY see in the image. If you see a bottle, say "bottle". If you see food, say the food item. Be accurate to what's actually in the image."""
+IMPORTANT: Look at the ACTUAL IMAGE. See if items are clean or dirty. Don't guess - use what you see. List all trash items:"""
         
         try:
             # Try vision API if model supports it
@@ -353,19 +304,17 @@ List ALL trash/waste items you can ACTUALLY see in the image. If you see a bottl
                     else:
                         print(f"⚠️ Vision API failed, using text-only: {error_str[:100]}")
                     
-                    # Use text-only classification with item names
-                    text_prompt = f"""You are a smart trash bin assistant. Classify these items into the correct waste bin:
-- RECYCLING: Paper, cardboard, plastic bottles/containers, metal cans, glass
-- COMPOST: Food scraps, fruit peels, vegetable scraps, coffee grounds, tea bags
-- LANDFILL: Non-recyclable plastics, styrofoam, mixed materials, contaminated items
+                    # Use text-only classification - fast and natural
+                    text_prompt = f"""Quickly classify these items. Format: [item] goes into [bin_type] bin usually [color]
 
-Items detected: {items_text}
+BIN COLORS:
+- RECYCLING = blue bin
+- COMPOST = green bin  
+- LANDFILL = black or grey bin
 
-For each item, determine which bin it should go into. Format your response like this:
-- [Item 1]: [BIN_TYPE] - [brief explanation]
-- [Item 2]: [BIN_TYPE] - [brief explanation]
+Items: {items_text}
 
-List all items with their bin classifications."""
+Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                     
                     try:
                         response = self.model.generate_content(text_prompt)
@@ -382,20 +331,18 @@ List all items with their bin classifications."""
                             return items_classifications
                         response_text = rule_based_result
             else:
-                # Text-only model - use item names
+                # Text-only model - fast and natural
                 print("⚠️ Model doesn't support vision, using text-only classification")
-                text_prompt = f"""You are a smart trash bin assistant. Classify these items into the correct waste bin:
-- RECYCLING: Paper, cardboard, plastic bottles/containers, metal cans, glass
-- COMPOST: Food scraps, fruit peels, vegetable scraps, coffee grounds, tea bags
-- LANDFILL: Non-recyclable plastics, styrofoam, mixed materials, contaminated items
+                text_prompt = f"""Quickly classify these items. Format: [item] goes into [bin_type] bin usually [color]
 
-Items detected: {items_text}
+BIN COLORS:
+- RECYCLING = blue bin
+- COMPOST = green bin
+- LANDFILL = black or grey bin
 
-For each item, determine which bin it should go into. Format your response like this:
-- [Item 1]: [BIN_TYPE] - [brief explanation]
-- [Item 2]: [BIN_TYPE] - [brief explanation]
+Items: {items_text}
 
-List all items with their bin classifications."""
+Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                 
                 try:
                     response = self.model.generate_content(text_prompt)
@@ -421,7 +368,7 @@ List all items with their bin classifications."""
                 # No trash found - return empty list
                 return []
             
-            # Parse response to extract all items and their classifications
+            # Parse response - look for natural format: "item goes into bin_type bin usually color"
             items_classifications = []
             lines = response_text.split('\n')
             
@@ -430,50 +377,122 @@ List all items with their bin classifications."""
                 if not line or line.startswith('#'):
                     continue
                 
-                # Look for patterns like "- Item: BIN_TYPE - explanation" or "Item: BIN_TYPE"
-                if ':' in line:
+                # Accept lines with or without dash prefix, or lines with "goes into/goes in"
+                has_dash = line.startswith('-')
+                has_goes_into = 'goes into' in line.lower() or 'goes in' in line.lower()
+                has_colon = ':' in line
+                
+                if not (has_dash or has_goes_into or has_colon):
+                    continue
+                
+                # Remove leading dash if present
+                line = line.lstrip('-').strip()
+                
+                # Parse natural format: "item goes into bin_type bin usually color"
+                # Or: "item: bin_type - explanation"
+                line_lower = line.lower()
+                
+                # Extract bin type first
+                bin_type = "landfill"  # default
+                if "recycle" in line_lower or "recycling" in line_lower:
+                    bin_type = "recycling"
+                elif "compost" in line_lower:
+                    bin_type = "compost"
+                elif "landfill" in line_lower or "trash" in line_lower:
+                    bin_type = "landfill"
+                
+                # Extract item name and create natural explanation
+                item_name = ""
+                explanation = ""
+                
+                # Pattern 1: "item goes into bin_type bin usually color"
+                if "goes into" in line_lower or "goes in" in line_lower:
+                    # Split on "goes into" or "goes in"
+                    parts = re.split(r'goes (into|in)', line_lower, 1)
+                    if len(parts) >= 2:
+                        item_name = parts[0].strip()
+                        rest = parts[-1].strip()
+                        
+                        # Extract color if mentioned
+                        color = ""
+                        if "blue" in rest:
+                            color = "blue"
+                        elif "green" in rest:
+                            color = "green"
+                        elif "black" in rest or "grey" in rest or "gray" in rest:
+                            color = "black or grey"
+                        
+                        # Create natural explanation
+                        if color:
+                            explanation = f"This goes in the {color} {bin_type} bin."
+                        else:
+                            explanation = f"This goes in the {bin_type} bin."
+                
+                # Pattern 2: "item: bin_type - explanation" (fallback)
+                elif ':' in line:
                     parts = line.split(':', 1)
                     if len(parts) == 2:
-                        item_name = parts[0].replace('-', '').strip()
+                        item_name = parts[0].strip()
                         rest = parts[1].strip()
                         
-                        # Extract bin type
-                        bin_type = "landfill"  # default
+                        # Extract color
+                        color = ""
                         rest_lower = rest.lower()
-                        if "recycling" in rest_lower:
-                            bin_type = "recycling"
-                        elif "compost" in rest_lower:
-                            bin_type = "compost"
-                        elif "landfill" in rest_lower:
-                            bin_type = "landfill"
+                        if "blue" in rest_lower:
+                            color = "blue"
+                        elif "green" in rest_lower:
+                            color = "green"
+                        elif "black" in rest_lower or "grey" in rest_lower or "gray" in rest_lower:
+                            color = "black or grey"
                         
-                        # Extract explanation (everything after bin type)
-                        explanation = rest
-                        if '-' in rest:
-                            explanation = rest.split('-', 1)[-1].strip()
-                        
-                        if item_name:
-                            items_classifications.append({
-                                'item': item_name,
-                                'bin_type': bin_type,
-                                'explanation': explanation
-                            })
+                        # Create explanation
+                        if color:
+                            explanation = f"This goes in the {color} {bin_type} bin."
+                        else:
+                            explanation = rest if rest else f"This goes in the {bin_type} bin."
+                
+                # If we found an item, add it
+                if item_name:
+                    items_classifications.append({
+                        'item': item_name,
+                        'bin_type': bin_type,
+                        'explanation': explanation if explanation else f"This goes in the {bin_type} bin."
+                    })
             
-            # If no structured items found, try to parse the whole response
+            # If no structured items found, try to extract from whole response
             if not items_classifications:
-                # Fallback: try to extract any mentioned items
                 response_lower = response_text.lower()
                 bin_type = "landfill"
-                if "recycling" in response_lower:
+                if "recycle" in response_lower or "recycling" in response_lower:
                     bin_type = "recycling"
                 elif "compost" in response_lower:
                     bin_type = "compost"
                 
+                # Try to extract item name from detected items or response
                 item_name = detected_items[0]['class'] if detected_items else "item"
+                if detected_items:
+                    item_name = detected_items[0]['class']
+                else:
+                    # Try to find item name in response
+                    words = response_text.split()
+                    if words:
+                        item_name = words[0]
+                
+                # Extract color
+                color = ""
+                if "blue" in response_lower:
+                    color = "blue"
+                elif "green" in response_lower:
+                    color = "green"
+                elif "black" in response_lower or "grey" in response_lower or "gray" in response_lower:
+                    color = "black or grey"
+                
+                explanation = f"This goes in the {color} {bin_type} bin." if color else f"This goes in the {bin_type} bin."
+                
                 items_classifications.append({
                     'item': item_name,
                     'bin_type': bin_type,
-                    'explanation': response_text
+                    'explanation': explanation
                 })
             
             return items_classifications
@@ -489,8 +508,8 @@ List all items with their bin classifications."""
     
     def _rule_based_classification(self, detected_items):
         """
-        Rule-based classification when API is unavailable
-        Provides basic classification based on item names
+        Intelligent rule-based classification when API is unavailable
+        Uses material-based logic rather than hardcoded item lists
         """
         if not detected_items:
             return "No items detected."
@@ -501,44 +520,91 @@ List all items with their bin classifications."""
             bin_type = "landfill"  # default
             explanation = ""
             
-            # Food items -> compost (GREEN BIN)
-            if any(food in item_name for food in ['apple', 'banana', 'orange', 'pizza', 'donut', 'cake', 
-                                                   'sandwich', 'hot dog', 'broccoli', 'carrot']):
+            # Intelligent material-based classification
+            # Organic/Food materials -> COMPOST
+            organic_keywords = ['apple', 'banana', 'orange', 'pizza', 'donut', 'cake', 
+                              'sandwich', 'hot dog', 'broccoli', 'carrot', 'food', 'fruit', 
+                              'vegetable', 'bread', 'meat', 'cheese']
+            if any(keyword in item_name for keyword in organic_keywords):
                 bin_type = "compost"
-                explanation = "This goes in the green compost bin. Food waste belongs in compost."
+                explanation = "This goes in the green compost bin. Organic food waste decomposes naturally and belongs in compost."
             
-            # Containers -> recycling (BLUE BIN) if clean
-            elif any(container in item_name for container in ['bottle', 'cup', 'bowl', 'can']):
-                bin_type = "recycling"
-                explanation = "This goes in the blue recycling bin. Clean containers are recyclable."
+            # Container materials -> RECYCLING (if likely clean)
+            # Check for container keywords AND material indicators
+            container_keywords = ['bottle', 'cup', 'bowl', 'can', 'jar', 'container']
+            material_keywords = ['plastic', 'metal', 'aluminum', 'glass', 'tin']
+            is_container = any(keyword in item_name for keyword in container_keywords)
+            has_recyclable_material = any(keyword in item_name for keyword in material_keywords)
             
-            # Paper items -> recycling (BLUE) or compost (GREEN) depending on condition
-            elif 'paper' in item_name or 'napkin' in item_name:
-                if 'napkin' in item_name:
-                    bin_type = "compost"
-                    explanation = "This goes in the green compost bin. Paper napkins with food residue belong in compost."
+            if is_container or has_recyclable_material:
+                # Check for contamination indicators
+                contaminated_keywords = ['dirty', 'greasy', 'soiled', 'contaminated']
+                is_contaminated = any(keyword in item_name for keyword in contaminated_keywords)
+                
+                if is_contaminated:
+                    bin_type = "landfill"
+                    explanation = "This goes in the black or grey landfill bin. While the material is recyclable, contamination makes it unsuitable for recycling."
                 else:
                     bin_type = "recycling"
-                    explanation = "This goes in the blue recycling bin. Clean paper can be recycled."
+                    explanation = "This goes in the blue recycling bin. Clean containers made of recyclable materials can be processed into new products."
             
-            # Electronics -> landfill (BLACK/GREY BIN) - e-waste needs special handling
-            elif any(elec in item_name for elec in ['phone', 'cell', 'remote', 'laptop', 'tv', 'monitor']):
+            # Paper products -> context-dependent
+            elif 'paper' in item_name or 'cardboard' in item_name or 'napkin' in item_name:
+                # Check for contamination
+                if 'napkin' in item_name or 'tissue' in item_name:
+                    bin_type = "compost"
+                    explanation = "This goes in the green compost bin. Paper napkins/tissues with potential food residue are better suited for compost."
+                else:
+                    bin_type = "recycling"
+                    explanation = "This goes in the blue recycling bin. Clean paper and cardboard are highly recyclable materials."
+            
+            # Electronics -> LANDFILL (e-waste needs special handling)
+            elif any(elec in item_name for elec in ['phone', 'cell', 'remote', 'laptop', 'tv', 'monitor', 'electronic']):
                 bin_type = "landfill"
-                explanation = "This goes in the black/grey landfill bin. Electronics should be taken to e-waste recycling centers, not regular trash."
+                explanation = "This goes in the black or grey landfill bin. Electronics contain hazardous materials and should be taken to e-waste recycling centers, not regular trash."
             
-            # Utensils -> recycling (BLUE BIN) if metal
-            elif any(utensil in item_name for utensil in ['fork', 'knife', 'spoon']):
+            # Utensils/forks - need to check material type
+            elif any(utensil in item_name for utensil in ['fork', 'knife', 'spoon', 'utensil']):
+                # Plastic utensils: recyclable if clean (default assumption)
+                if 'plastic' in item_name:
+                    bin_type = "recycling"
+                    explanation = "This goes in the blue recycling bin. Clean plastic utensils are recyclable."
+                # Metal utensils: recyclable if clean
+                elif 'metal' in item_name or any(m in item_name for m in ['steel', 'aluminum']):
+                    bin_type = "recycling"
+                    explanation = "This goes in the blue recycling bin. Metal utensils can be recycled if clean."
+                else:
+                    # Default: assume clean plastic, recyclable
+                    bin_type = "recycling"
+                    explanation = "This goes in the blue recycling bin. Clean utensils are typically recyclable."
+            
+            # Metal items (not utensils) -> RECYCLING
+            elif 'metal' in item_name and 'utensil' not in item_name and 'fork' not in item_name:
                 bin_type = "recycling"
-                explanation = "This goes in the blue recycling bin. Metal utensils can be recycled if clean."
+                explanation = "This goes in the blue recycling bin. Metal items can be recycled if clean."
             
-            # Styrofoam, plastic wrappers -> landfill (BLACK/GREY BIN)
-            elif 'styrofoam' in item_name or 'wrapper' in item_name:
+            # Non-recyclable plastics -> LANDFILL
+            elif any(plastic in item_name for plastic in ['styrofoam', 'wrapper', 'bag', 'film', 'wrap']):
                 bin_type = "landfill"
-                explanation = "This goes in the black/grey landfill bin. Styrofoam and plastic wrappers are not recyclable."
+                explanation = "This goes in the black or grey landfill bin. These types of plastics are typically not accepted in curbside recycling programs."
             
+            # Glass -> RECYCLING
+            elif 'glass' in item_name:
+                bin_type = "recycling"
+                explanation = "This goes in the blue recycling bin. Glass is infinitely recyclable and should be recycled when clean."
+            
+            # Default: use intelligent fallback
             else:
-                bin_type = "landfill"
-                explanation = "This goes in the black/grey landfill bin. Please check local recycling guidelines for specific items."
+                # Try to infer from item name characteristics
+                if any(word in item_name for word in ['plastic', 'metal', 'aluminum']):
+                    bin_type = "recycling"
+                    explanation = "This goes in the blue recycling bin. The material appears recyclable, but check local guidelines for specific item types."
+                elif any(word in item_name for word in ['food', 'organic', 'biodegradable']):
+                    bin_type = "compost"
+                    explanation = "This goes in the green compost bin. Organic materials decompose and belong in compost."
+                else:
+                    bin_type = "landfill"
+                    explanation = "This goes in the black or grey landfill bin. When in doubt, check local recycling guidelines for proper disposal."
             
             classifications.append(f"- {item['class']}: {bin_type.upper()} - {explanation}")
         
