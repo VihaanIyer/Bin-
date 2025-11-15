@@ -65,27 +65,32 @@ class BinLayoutAnalyzer:
 You are inspecting a single photo of several waste/garbage bins. Your goal is to read the labels, signage, icons, and color cues so that a downstream system knows what each bin is meant for.
 
 Instructions:
-- Identify every distinct bin you see (usually 2-6). Work left-to-right when describing positions.
-- For each bin, capture the exact text on the bin ("signage_text"), describe the main color(s), list any icons/symbols, and infer its likely waste stream classification ("bin_type_guess": recycling, compost, landfill, e-waste, bottles, paper, mixed, unknown, etc.).
-- If text is partially readable, include what you can and note missing parts.
-- If multiple labels/icons exist on one bin, include them all.
-- When you are unsure about the class, mark bin_type_guess as "unknown" but still provide clues (e.g., "Blue bin with recycling arrows").
+- Identify every distinct bin you see (usually 2-6). Work roughly left-to-right.
+- For each bin, infer:
+  - a short machine-friendly label,
+  - a waste stream type (landfill, compost, recycling, paper, mixed, e-waste, unknown, etc.),
+  - a short color description,
+  - a very short summary of the signage (not full text, just the key idea),
+  - a coarse position hint (leftmost, second_from_left, center, second_from_right, rightmost),
+  - a confidence score between 0 and 1.
 
-Respond with STRICT JSON using this schema (no markdown, no prose):
+Keep the JSON compact. Do NOT include full paragraphs of text.
+
+Respond with STRICT JSON using this compact schema (no markdown, no prose):
+
 {
   "bins": [
     {
-      "bin_label": "short nickname you assign (e.g., Left Blue Bin)",
-      "bin_type_guess": "recycling|compost|landfill|paper|mixed|e-waste|unknown",
-      "bin_color": "text description of colors",
-      "signage_text": "verbatim text you can read (or null)",
-      "icon_description": "recycling triangle, food scraps icon, etc.",
-      "position_hint": "leftmost|second from left|center|etc.",
-      "additional_notes": "anything else important about this bin",
-      "confidence": 0.0-1.0
+      "id": 0,                       // integer index, left-to-right
+      "label": "left_black",         // short nickname
+      "type": "landfill|compost|recycling|paper|mixed|e-waste|unknown",
+      "pos": "leftmost|second_from_left|center|second_from_right|rightmost",
+      "color": "short color phrase",
+      "sign": "very short summary of main signage",
+      "conf": 0.0
     }
   ],
-  "scene_notes": "overall context or observations about the lineup"
+  "scene": "short summary of the overall lineup"
 }
 
 Return valid JSON only.
@@ -97,34 +102,38 @@ Return valid JSON only.
             generation_config={
                 "response_mime_type": "application/json",
                 "temperature": 0.2,
-                "max_output_tokens": 2048,
+                "max_output_tokens": 512,  # smaller, keeps response compact
             },
         )
 
         response_text = response.text
+        # keep raw text for debugging if needed
         self.classifier.last_raw_response = response_text
 
         parsed = self._safe_json_loads(response_text)
         result: Dict[str, Any] = {
             "bins": [],
-            "scene_notes": "",
+            "scene": "",
             "raw_response": response_text,
         }
 
         if isinstance(parsed, dict):
+            # Expecting keys: "bins" and "scene"
             result["bins"] = parsed.get("bins", []) or []
-            result["scene_notes"] = parsed.get("scene_notes", "")
+            result["scene"] = parsed.get("scene", "") or ""
+            # Preserve any extra top-level fields under metadata (optional)
             for key, value in parsed.items():
-                if key not in ("bins", "scene_notes"):
+                if key not in ("bins", "scene"):
                     result.setdefault("metadata", {})[key] = value
         elif isinstance(parsed, list):
+            # Fallback: treat as a bare bins list
             result["bins"] = parsed
         else:
             result["metadata"] = {"parse_warning": "Gemini response was not valid JSON"}
 
         self._write_cache(result)
         return result
-    
+
     @classmethod
     def load_cached_bins(cls) -> Optional[Dict[str, Any]]:
         """
@@ -137,7 +146,7 @@ Return valid JSON only.
             except json.JSONDecodeError:
                 return None
         return None
-    
+
     def _write_cache(self, data: Dict[str, Any]):
         """
         Persist the parsed layout to disk so it can be reused without reprocessing the photo.
@@ -164,15 +173,21 @@ def preview_bin_layout():
     bins = result.get("bins", [])
     print(f"Found {len(bins)} bins:\n")
     for idx, bin_info in enumerate(bins, 1):
-        label = bin_info.get("bin_label", f"Bin {idx}")
-        bin_type = bin_info.get("bin_type_guess", "unknown")
-        color = bin_info.get("bin_color", "n/a")
-        signage = bin_info.get("signage_text", "n/a")
-        print(f"{idx}. {label} -> {bin_type} | Color: {color} | Signage: {signage}")
-        if bin_info.get("additional_notes"):
-            print(f"   Notes: {bin_info['additional_notes']}")
-    print("\nScene notes:")
-    print(result.get("scene_notes", "").strip() or "(none)")
+        # New compact keys
+        label = bin_info.get("label", f"bin_{bin_info.get('id', idx-1)}")
+        bin_type = bin_info.get("type", "unknown")
+        pos = bin_info.get("pos", "n/a")
+        color = bin_info.get("color", "n/a")
+        sign = bin_info.get("sign", "n/a")
+        conf = bin_info.get("conf", None)
+
+        line = f"{idx}. {label} -> {bin_type} | Pos: {pos} | Color: {color} | Sign: {sign}"
+        if conf is not None:
+            line += f" | Conf: {conf:.2f}" if isinstance(conf, (int, float)) else f" | Conf: {conf}"
+        print(line)
+
+    print("\nScene:")
+    print(result.get("scene", "").strip() or "(none)")
     print(f"\nCached result at: {BinLayoutAnalyzer.BIN_LAYOUT_OUTPUT_PATH.resolve()}")
 
 
