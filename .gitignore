@@ -15,4 +15,8 @@ build/
 *.log
 node_modules/
 package-lock.json
+uploads/
+bin_layout_*.json
+__pycache__/
+*.pyc
 

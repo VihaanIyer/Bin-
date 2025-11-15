@@ -314,17 +314,23 @@ CRITICAL: Look at the IMAGE to determine if items are CLEAN or CONTAMINATED. Ana
                 "- LANDFILL (black/grey): Contaminated or non-recyclable items"
             ]
         
-        prompt = f"""EXAMINE THIS IMAGE CLOSELY. Look at each item's actual appearance, material, and condition. Classify based on what you SEE, not assumptions.
+        prompt = f"""EXAMINE THIS IMAGE VERY CAREFULLY. Look at each item's ACTUAL appearance, material, condition, and CONTEXT. Be precise and accurate.
 
 CRITICAL: ONLY identify items that are TRASH/WASTE meant for disposal. IGNORE personal items like:
 - Phones, electronics, devices, chargers
-- Hats, caps, beanies, clothing, accessories
+- Hats, caps, beanies, clothing, accessories, GLOVES (work gloves, medical gloves, etc.)
 - Wallets, keys, personal belongings
 - Bags, backpacks, purses
 - Glasses, watches, jewelry
-- Any item clearly being held/used by a person (not trash)
+- Any item clearly being held/used by a person that is NOT trash (like gloves on hands)
 
 ONLY classify items that are clearly waste/trash ready to be thrown away (food scraps, empty containers, used utensils, wrappers, etc.).
+
+ACCURACY CHECKLIST:
+- Is this item actually trash/waste? (NOT a personal item being used)
+- Can you clearly see it's meant for disposal? (NOT something the person is wearing/using)
+- Is it clearly visible in the image? (NOT a misidentification)
+- Look at the actual material and condition - don't guess based on color alone
 
 {items_text}
 
@@ -876,21 +882,96 @@ Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
         self.bin_context = " | ".join(summaries)
         self.bin_layout_metadata = bin_layout_result
     
-    def answer_question(self, question):
+    def answer_question(self, question, last_classifications=None):
         """
         Answer user questions about recycling/waste disposal
         
         Args:
             question: User's question
+            last_classifications: List of recent classifications (for "why" questions)
             
         Returns:
-            Answer from Gemini
+            Answer from Gemini or None if question is not relevant
         """
-        prompt = f"""You are a helpful recycling and waste disposal assistant. 
-Answer the following question about waste disposal, recycling, or composting:
-{question}
+        question_lower = question.lower()
+        
+        # Check if question is relevant to trash/recycling/waste disposal
+        relevant_keywords = [
+            'trash', 'recycle', 'recycling', 'compost', 'landfill', 'garbage', 'waste',
+            'bin', 'disposal', 'throw', 'away', 'why', 'how', 'what', 'where',
+            'plastic', 'paper', 'metal', 'fork', 'bottle', 'container', 'plate',
+            'repeat', 'again', 'say', 'explain', 'clarify'
+        ]
+        
+        # Check if question is clearly NOT relevant
+        irrelevant_keywords = [
+            'eiffel tower', 'tall', 'height', 'weather', 'time', 'date', 'capital',
+            'president', 'sports', 'movie', 'music', 'recipe', 'cooking'
+        ]
+        
+        # Check for irrelevant questions
+        if any(keyword in question_lower for keyword in irrelevant_keywords):
+            # Check if it's actually about trash (e.g., "how tall is the recycling bin")
+            if not any(relevant in question_lower for relevant in ['bin', 'trash', 'recycle', 'waste']):
+                return None  # Not relevant
+        
+        # Check if question is relevant
+        if not any(keyword in question_lower for keyword in relevant_keywords):
+            return None  # Not relevant
+        
+        # Handle "repeat" or "say again" requests
+        if any(phrase in question_lower for phrase in ['repeat', 'say again', 'what did you say', 'can you repeat']):
+            if last_classifications:
+                # Reconstruct what was said
+                responses = []
+                for item in last_classifications:
+                    bin_name = self._get_bin_name_for_type(item.get('bin_type', 'bin'))
+                    bin_color = item.get('bin_color', self._get_bin_color_for_type(item.get('bin_type', 'bin')))
+                    responses.append(f"{item.get('item', 'item')} goes into {bin_name} usually {bin_color}")
+                return ". ".join(responses)
+            else:
+                return "I don't have anything to repeat. Please hold an item in front of the camera first."
+        
+        # Build context from last classifications for "why" questions
+        context = ""
+        if last_classifications and any(word in question_lower for word in ['why', 'explain', 'reason']):
+            context_items = []
+            for item in last_classifications:
+                item_name = item.get('item', 'item')
+                bin_type = item.get('bin_type', 'bin')
+                bin_name = self._get_bin_name_for_type(bin_type)
+                explanation = item.get('explanation', '')
+                context_items.append(f"{item_name} was classified as {bin_name}. {explanation}")
+            if context_items:
+                context = f"\n\nRecent classifications for context:\n" + "\n".join(context_items)
+        
+        # Build prompt with system context
+        system_context = f"""You are a smart garbage bin assistant software. Your purpose is to help users correctly dispose of waste items.
 
-Provide a clear, concise, and helpful answer."""
+AVAILABLE BINS:
+"""
+        if self.bin_layout:
+            for bin_info in self.bin_layout:
+                bin_type = bin_info.get('type', '').upper()
+                color = bin_info.get('color', '')
+                sign = bin_info.get('sign', '')
+                system_context += f"- {bin_type} ({color}): {sign}\n"
+        else:
+            system_context += "- RECYCLING (blue): Clean recyclable materials\n"
+            system_context += "- COMPOST (green): Organic food waste\n"
+            system_context += "- LANDFILL (black/grey): Contaminated or non-recyclable items\n"
+        
+        prompt = f"""{system_context}
+
+User Question: {question}{context}
+
+Instructions:
+- Answer ONLY questions related to waste disposal, recycling, composting, or the items you just classified
+- If the question is about a recent classification, explain WHY based on the item's condition, material, and contamination level
+- Be helpful, clear, and concise
+- If asked "why" about a classification, explain the reasoning based on the bin rules and item condition
+
+Answer:"""
         
         try:
             response = self.model.generate_content(prompt)

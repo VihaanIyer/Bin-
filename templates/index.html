@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bin Layout Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        select:hover {
+            border-color: #667eea;
+        }
+        
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .file-upload {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .file-upload input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .file-upload-label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            border: 3px dashed #e0e0e0;
+            border-radius: 10px;
+            background: #f9f9f9;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        
+        .file-upload-label:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        
+        .camera-container {
+            width: 100%;
+        }
+        
+        .camera-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            border: 3px dashed #e0e0e0;
+            border-radius: 10px;
+            background: #f9f9f9;
+            text-align: center;
+        }
+        
+        .camera-btn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 15px;
+        }
+        
+        .camera-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .camera-btn.primary {
+            background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+        }
+        
+        .file-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        
+        .file-text {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .result {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f1f8f4;
+            border-radius: 10px;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .result.active {
+            display: block;
+        }
+        
+        .result h3 {
+            color: #4caf50;
+            margin-bottom: 15px;
+        }
+        
+        .result.error {
+            background: #fff5f5;
+            border-left-color: #f44336;
+        }
+        
+        .result.error h3 {
+            color: #f44336;
+        }
+        
+        .bin-list {
+            margin-top: 15px;
+        }
+        
+        .bin-item {
+            background: white;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .bin-item strong {
+            color: #333;
+        }
+        
+        .bin-item span {
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗑️ Bin Layout Configuration</h1>
+        <p class="subtitle">Upload an image of your bin layout and select your location</p>
+        
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="location">Select Location</label>
+                <select id="location" name="location" required>
+                    <option value="">Choose a location...</option>
+                    {% for key, name in locations.items() %}
+                    <option value="{{ key }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Take Photo of Bin Layout</label>
+                <div class="camera-container">
+                    <video id="video" autoplay playsinline style="display: none; width: 100%; border-radius: 10px; background: #000;"></video>
+                    <canvas id="canvas" style="display: none;"></canvas>
+                    <div id="cameraPlaceholder" class="camera-placeholder">
+                        <div class="file-icon">📷</div>
+                        <div class="file-text">Click to take a photo of your bin layout</div>
+                        <button type="button" id="startCameraBtn" class="camera-btn">Start Camera</button>
+                    </div>
+                    <div id="cameraControls" style="display: none; margin-top: 15px; text-align: center;">
+                        <button type="button" id="captureBtn" class="camera-btn primary">📸 Capture Photo</button>
+                        <button type="button" id="retakeBtn" class="camera-btn" style="margin-left: 10px;">🔄 Retake</button>
+                    </div>
+                    <div id="previewContainer" style="display: none; margin-top: 15px;">
+                        <img id="previewImage" style="width: 100%; border-radius: 10px; border: 3px solid #4caf50;">
+                        <p style="text-align: center; color: #4caf50; margin-top: 10px; font-weight: 600;">Photo captured! Ready to analyze.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <button type="submit" id="submitBtn">Analyze Bin Layout</button>
+        </form>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing bin layout with AI...</p>
+        </div>
+        
+        <div class="result" id="result">
+            <h3 id="resultTitle"></h3>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const result = document.getElementById('result');
+        const resultTitle = document.getElementById('resultTitle');
+        const resultContent = document.getElementById('resultContent');
+        
+        // Camera elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const startCameraBtn = document.getElementById('startCameraBtn');
+        const captureBtn = document.getElementById('captureBtn');
+        const retakeBtn = document.getElementById('retakeBtn');
+        const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+        const cameraControls = document.getElementById('cameraControls');
+        const previewContainer = document.getElementById('previewContainer');
+        const previewImage = document.getElementById('previewImage');
+        
+        let stream = null;
+        let capturedImageBlob = null;
+        
+        // Start camera
+        startCameraBtn.addEventListener('click', async function() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment', // Use back camera on mobile
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    } 
+                });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                cameraPlaceholder.style.display = 'none';
+                cameraControls.style.display = 'block';
+            } catch (error) {
+                alert('Error accessing camera: ' + error.message);
+                console.error('Camera error:', error);
+            }
+        });
+        
+        // Capture photo
+        captureBtn.addEventListener('click', function() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            // Stop camera stream
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            // Convert to blob
+            canvas.toBlob(function(blob) {
+                capturedImageBlob = blob;
+                const imageUrl = URL.createObjectURL(blob);
+                previewImage.src = imageUrl;
+                video.style.display = 'none';
+                cameraControls.style.display = 'none';
+                previewContainer.style.display = 'block';
+            }, 'image/jpeg', 0.95);
+        });
+        
+        // Retake photo
+        retakeBtn.addEventListener('click', function() {
+            previewContainer.style.display = 'none';
+            cameraPlaceholder.style.display = 'block';
+            cameraControls.style.display = 'none';
+            capturedImageBlob = null;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+        });
+        
+        // Handle form submission
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const location = document.getElementById('location').value;
+            
+            if (!location) {
+                showResult('Please select a location', true);
+                return;
+            }
+            
+            if (!capturedImageBlob) {
+                showResult('Please take a photo first', true);
+                return;
+            }
+            
+            // Show loading
+            loading.classList.add('active');
+            result.classList.remove('active');
+            submitBtn.disabled = true;
+            
+            // Create form data with captured image
+            const formData = new FormData();
+            formData.append('image', capturedImageBlob, 'bin_layout.jpg');
+            formData.append('location', location);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess(data);
+                } else {
+                    showResult(data.error || 'An error occurred', true);
+                }
+            } catch (error) {
+                showResult('Network error: ' + error.message, true);
+            } finally {
+                loading.classList.remove('active');
+                submitBtn.disabled = false;
+            }
+        });
+        
+        function showSuccess(data) {
+            result.classList.remove('error');
+            result.classList.add('active');
+            resultTitle.textContent = '✅ Success!';
+            
+            let html = `<p><strong>Location:</strong> ${data.location_name}</p>`;
+            html += `<p><strong>Scene:</strong> ${data.scene || 'N/A'}</p>`;
+            html += `<p><strong>Bins Found:</strong> ${data.bins.length}</p>`;
+            
+            if (data.bins.length > 0) {
+                html += '<div class="bin-list">';
+                data.bins.forEach((bin, index) => {
+                    html += `
+                        <div class="bin-item">
+                            <strong>Bin ${index + 1}:</strong> ${bin.label || 'Unnamed'}<br>
+                            <span>Type: ${bin.type || 'Unknown'} | Color: ${bin.color || 'N/A'} | Position: ${bin.pos || 'N/A'}</span><br>
+                            <span style="font-size: 12px;">${bin.sign || 'No signage detected'}</span>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+            
+            html += `<p style="margin-top: 15px; font-size: 12px; color: #666;">Layout saved to: ${data.location_file}</p>`;
+            html += `<div style="margin-top: 15px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;">`;
+            html += `<strong style="color: #1976d2;">📝 To use this configuration:</strong><br>`;
+            html += `<code style="font-size: 11px; color: #333;">export BIN_LOCATION=${data.location}</code><br>`;
+            html += `<span style="font-size: 11px; color: #666;">Or add to .env file: BIN_LOCATION=${data.location}</span>`;
+            html += `</div>`;
+            
+            resultContent.innerHTML = html;
+        }
+        
+        function showResult(message, isError = false) {
+            result.classList.remove('error');
+            if (isError) {
+                result.classList.add('error');
+                resultTitle.textContent = '❌ Error';
+            } else {
+                resultTitle.textContent = 'ℹ️ Info';
+            }
+            resultContent.innerHTML = `<p>${message}</p>`;
+            result.classList.add('active');
+        }
+    </script>
+</body>
+</html>
+

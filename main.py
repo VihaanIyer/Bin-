@@ -6,10 +6,12 @@ Main application that integrates object detection, Gemini AI, and ElevenLabs TTS
 import cv2
 import time
 import threading
+import os
 from datetime import datetime
 from object_detector import ObjectDetector
 from gemini_classifier import TrashClassifier
 from tts_handler import TTSHandler
+from voice_input import VoiceInputHandler
 from bin_layout_analyzer import BinLayoutAnalyzer
 
 # Modify this when you want to switch cameras (Continuity Cam often shows as index 1 or 2)
@@ -155,30 +157,35 @@ class SmartTrashBin:
             Logger.log_error(str(e), "TrashClassifier initialization")
             raise
         
-        # Dedicated bin layout step (uses hardcoded reference photo inside BinLayoutAnalyzer)
+        # Load bin layout from location-specific JSON file or main metadata file
         self.bin_layout_metadata = None
-        try:
-            Logger.log_system_event("Running bin layout analysis from reference photo...")
-            self.bin_layout_analyzer = BinLayoutAnalyzer(self.classifier)
-            bin_layout_result = self.bin_layout_analyzer.analyze_bins()
-            self.bin_layout_metadata = bin_layout_result
-            self.classifier.update_bin_context(bin_layout_result)
-            identified_bins = len(bin_layout_result.get("bins", [])) if isinstance(bin_layout_result, dict) else len(bin_layout_result or [])
-            Logger.log_system_event(f"Bin layout analysis complete. Identified {identified_bins} bins for contextual classification.")
-        except FileNotFoundError as e:
-            Logger.log_error(str(e), "Bin layout analysis (update BIN_LAYOUT_IMAGE_PATH in bin_layout_analyzer.py)")
-        except Exception as e:
-            Logger.log_error(str(e), "Bin layout analysis")
+        self.location = os.getenv('BIN_LOCATION', None)  # Can be set via environment variable
         
+        # Try to load location-specific bin layout first
+        if self.location:
+            location_file = f"bin_layout_{self.location}.json"
+            if os.path.exists(location_file):
+                try:
+                    with open(location_file, 'r') as f:
+                        import json
+                        self.bin_layout_metadata = json.load(f)
+                        self.classifier.update_bin_context(self.bin_layout_metadata)
+                        identified_bins = len(self.bin_layout_metadata.get("bins", [])) if isinstance(self.bin_layout_metadata, dict) else len(self.bin_layout_metadata or [])
+                        Logger.log_system_event(f"Loaded {identified_bins} bins from location-specific file: {location_file}")
+                except Exception as e:
+                    Logger.log_error(str(e), f"Loading location file {location_file}")
+        
+        # Fallback to main bin_layout_metadata.json
         if self.bin_layout_metadata is None:
             cached_layout = BinLayoutAnalyzer.load_cached_bins()
             if cached_layout:
                 self.bin_layout_metadata = cached_layout
                 self.classifier.update_bin_context(cached_layout)
                 cached_bins = len(cached_layout.get("bins", [])) if isinstance(cached_layout, dict) else len(cached_layout or [])
-                Logger.log_system_event(f"Loaded {cached_bins} cached bins from bin_layout_metadata.json.")
+                Logger.log_system_event(f"Loaded {cached_bins} bins from bin_layout_metadata.json.")
             else:
-                Logger.log_system_event("No cached bin layout found. Gemini classifications will run without facility-specific labels.")
+                Logger.log_system_event("No bin layout found. Please configure bins using the web app first.")
+                Logger.log_system_event("Run: python web_app.py and configure your bin layout")
         
         try:
             Logger.log_system_event("Initializing TTS handler...")
@@ -188,9 +195,15 @@ class SmartTrashBin:
             Logger.log_error(str(e), "TTSHandler initialization")
             raise
         
-        # Voice input disabled - system only detects trash
-        self.voice_input = None
-        Logger.log_system_event("Voice input disabled - focusing on trash detection only")
+        # Initialize voice input for questions
+        try:
+            Logger.log_system_event("Initializing voice input handler...")
+            self.voice_input = VoiceInputHandler()
+            Logger.log_system_event("Voice input handler initialized")
+        except Exception as e:
+            Logger.log_error(str(e), "VoiceInputHandler initialization")
+            self.voice_input = None
+            Logger.log_system_event("Voice input disabled - continuing without question support")
         
         # State management
         self.last_detection_time = 0
@@ -199,6 +212,8 @@ class SmartTrashBin:
         self.current_classifications = []  # Store all classifications
         self.processing_question = False
         self.person_detected_time = None  # Track when person was detected for timing
+        self.last_spoken_text = []  # Store last spoken items for "repeat" functionality
+        self.listening_for_questions = False  # Track if we're listening for questions
         
         Logger.log_system_event("System fully initialized and ready!")
         print("\n" + "="*80)
@@ -233,6 +248,63 @@ class SmartTrashBin:
         
         Logger.log_system_event(f"Selected best frame from {len(frames)} captures (sharpness score: {best_score:.2f})")
         return best_frame
+    
+    def _listen_for_questions(self, duration=10):
+        """
+        Listen for user questions for a specified duration
+        
+        Args:
+            duration: How long to listen in seconds
+        """
+        if not self.voice_input:
+            return
+        
+        self.listening_for_questions = True
+        Logger.log_system_event(f"Listening for questions for {duration} seconds...")
+        
+        start_time = time.time()
+        while time.time() - start_time < duration and self.listening_for_questions:
+            try:
+                question = self.voice_input.listen_once(timeout=2)
+                if question:
+                    Logger.log_system_event(f"Question detected: {question}")
+                    self._handle_question(question)
+                    # Continue listening for more questions
+                    start_time = time.time()  # Reset timer after answering
+            except Exception as e:
+                Logger.log_error(str(e), "Question listening")
+                time.sleep(0.5)
+        
+        self.listening_for_questions = False
+        Logger.log_system_event("Question listening period ended")
+    
+    def _handle_question(self, question):
+        """
+        Handle a user question
+        
+        Args:
+            question: The user's question text
+        """
+        if not question:
+            return
+        
+        Logger.log_system_event(f"Processing question: {question}")
+        
+        # Get answer from classifier
+        answer = self.classifier.answer_question(question, self.current_classifications)
+        
+        if answer is None:
+            # Question not relevant
+            response = "I can only answer questions about waste disposal and recycling. Please ask me about trash, recycling, or the items I just classified."
+            Logger.log_tts_output(response)
+            self.tts.speak(response)
+        else:
+            # Relevant question - speak the answer
+            Logger.log_tts_output(f"Answer: {answer}")
+            self.tts.speak(answer)
+            # Continue listening for follow-up questions
+            if self.listening_for_questions:
+                time.sleep(0.5)  # Brief pause before continuing to listen
     
     def process_detection(self, food_items, frame=None):
         """
@@ -298,28 +370,41 @@ class SmartTrashBin:
             bin_color = item.get('bin_color', get_bin_color(item['bin_type']))
             return bin_name, bin_color
         
+        # Store spoken text for "repeat" functionality
+        self.last_spoken_text = []
+        
         if len(classifications) == 1:
             # Single item - natural, fast response
             item = classifications[0]
             bin_name, bin_color = get_bin_info(item)
             # Use format: "item goes into bin_name usually color"
             response = f"{item['item']} goes into {bin_name} usually {bin_color}"
+            self.last_spoken_text.append(response)
             Logger.log_tts_output(response)
             self.tts.speak(response)
             # Add closing message
-            Logger.log_tts_output("Have a great day!")
-            self.tts.speak("Have a great day!")
+            closing_msg = "If you have any questions, let me know."
+            self.last_spoken_text.append(closing_msg)
+            Logger.log_tts_output(closing_msg)
+            self.tts.speak(closing_msg)
         elif len(classifications) > 1:
             # Multiple items - speak each one naturally
             for i, item in enumerate(classifications, 1):
                 bin_name, bin_color = get_bin_info(item)
                 response = f"{item['item']} goes into {bin_name} usually {bin_color}"
+                self.last_spoken_text.append(response)
                 Logger.log_tts_output(response)
                 self.tts.speak(response)
                 time.sleep(0.3)  # Shorter pause for faster response
             # Add closing message after all items
-            Logger.log_tts_output("Have a great day!")
-            self.tts.speak("Have a great day!")
+            closing_msg = "If you have any questions, let me know."
+            self.last_spoken_text.append(closing_msg)
+            Logger.log_tts_output(closing_msg)
+            self.tts.speak(closing_msg)
+        
+        # Listen for questions for 10 seconds after speaking
+        if self.voice_input:
+            self._listen_for_questions(10)
     
     
     def run(self):
@@ -432,9 +517,13 @@ class SmartTrashBin:
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 # Show instructions
-                cv2.putText(frame, "PERSON DETECTION MODE - Press 'q' to quit", 
-                           (10, frame.shape[0] - 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                status_text = "PERSON DETECTION MODE"
+                if self.listening_for_questions:
+                    status_text += " - Listening for questions..."
+                status_text += " - Press 'q' to quit"
+                cv2.putText(frame, status_text,
+                            (10, frame.shape[0] - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 # Display the frame
                 cv2.imshow('Smart Trash Bin - Detection Running', frame)
@@ -451,6 +540,7 @@ class SmartTrashBin:
             # Cleanup
             cap.release()
             cv2.destroyAllWindows()
+            self.listening_for_questions = False  # Stop listening
             if self.voice_input:
                 self.voice_input.stop_listening()
             print("System shut down successfully.")

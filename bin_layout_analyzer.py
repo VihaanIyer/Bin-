@@ -57,9 +57,10 @@ class BinLayoutAnalyzer:
                     return None
         return None
 
-    def analyze_bins(self) -> Dict[str, Any]:
+    def _analyze_image(self, image: Image.Image) -> Dict[str, Any]:
         """
-        Run Gemini over the hardcoded image path and return parsed bin metadata.
+        Analyze a PIL Image and return parsed bin metadata.
+        Internal method that accepts a PIL Image directly.
         """
         prompt = """
 You are inspecting a single photo of several waste/garbage bins. Your goal is to read the labels, signage, icons, and color cues so that a downstream system knows what each bin is meant for.
@@ -96,7 +97,6 @@ Respond with STRICT JSON using this compact schema (no markdown, no prose):
 Return valid JSON only.
         """.strip()
 
-        image = self._ensure_pil_image(self.BIN_LAYOUT_IMAGE_PATH)
         response = self.classifier.model.generate_content(
             [prompt, image],
             generation_config={
@@ -133,6 +133,13 @@ Return valid JSON only.
 
         self._write_cache(result)
         return result
+    
+    def analyze_bins(self) -> Dict[str, Any]:
+        """
+        Run Gemini over the hardcoded image path and return parsed bin metadata.
+        """
+        image = self._ensure_pil_image(self.BIN_LAYOUT_IMAGE_PATH)
+        return self._analyze_image(image)
 
     @classmethod
     def load_cached_bins(cls) -> Optional[Dict[str, Any]]:
