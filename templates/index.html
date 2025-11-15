@@ -253,6 +253,90 @@
             color: #666;
             font-size: 14px;
         }
+        
+        .editable-bin {
+            background: white;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+        
+        .editable-bin:hover {
+            border-color: #667eea;
+        }
+        
+        .editable-bin.editing {
+            border-color: #4caf50;
+            box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+        }
+        
+        .bin-field {
+            margin-bottom: 10px;
+        }
+        
+        .bin-field label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .bin-field input,
+        .bin-field select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .bin-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .btn-remove {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .btn-remove:hover {
+            background: #d32f2f;
+        }
+        
+        .btn-setup {
+            background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+        }
+        
+        .btn-setup:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(76, 175, 80, 0.3);
+        }
+        
+        .btn-setup:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body>
@@ -430,37 +514,253 @@
             }
         });
         
+        let currentBins = [];
+        let currentLocation = '';
+        let currentScene = '';
+        let currentRawResponse = '';
+        
         function showSuccess(data) {
             result.classList.remove('error');
             result.classList.add('active');
-            resultTitle.textContent = '✅ Success!';
+            resultTitle.textContent = '✅ Bins Detected - Edit & Set Up';
+            
+            // Store data for editing
+            currentBins = JSON.parse(JSON.stringify(data.bins)); // Deep copy
+            currentLocation = data.location;
+            currentScene = data.scene || '';
+            currentRawResponse = data.raw_response || '';
             
             let html = `<p><strong>Location:</strong> ${data.location_name}</p>`;
             html += `<p><strong>Scene:</strong> ${data.scene || 'N/A'}</p>`;
-            html += `<p><strong>Bins Found:</strong> ${data.bins.length}</p>`;
+            html += `<p><strong>Bins Found:</strong> ${currentBins.length}</p>`;
+            html += `<p style="color: #666; font-size: 13px; margin-top: 10px;">Edit the bins below, remove any you don't have, then click "Set Up" to activate.</p>`;
             
-            if (data.bins.length > 0) {
-                html += '<div class="bin-list">';
-                data.bins.forEach((bin, index) => {
-                    html += `
-                        <div class="bin-item">
-                            <strong>Bin ${index + 1}:</strong> ${bin.label || 'Unnamed'}<br>
-                            <span>Type: ${bin.type || 'Unknown'} | Color: ${bin.color || 'N/A'} | Position: ${bin.pos || 'N/A'}</span><br>
-                            <span style="font-size: 12px;">${bin.sign || 'No signage detected'}</span>
-                        </div>
-                    `;
+            if (currentBins.length > 0) {
+                html += '<div id="editableBins" style="margin-top: 20px;">';
+                currentBins.forEach((bin, index) => {
+                    html += createEditableBinHtml(bin, index);
                 });
                 html += '</div>';
             }
             
-            html += `<p style="margin-top: 15px; font-size: 12px; color: #666;">Layout saved to: ${data.location_file}</p>`;
-            html += `<div style="margin-top: 15px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;">`;
-            html += `<strong style="color: #1976d2;">📝 To use this configuration:</strong><br>`;
-            html += `<code style="font-size: 11px; color: #333;">export BIN_LOCATION=${data.location}</code><br>`;
-            html += `<span style="font-size: 11px; color: #666;">Or add to .env file: BIN_LOCATION=${data.location}</span>`;
-            html += `</div>`;
+            html += `<button type="button" id="setupBtn" class="btn-setup">✅ Set Up Bins</button>`;
+            html += `<div id="setupResult" style="margin-top: 15px;"></div>`;
             
             resultContent.innerHTML = html;
+            
+            // Attach event listeners
+            attachBinEventListeners();
+        }
+        
+        function createEditableBinHtml(bin, index) {
+            const binTypes = ['recycling', 'compost', 'landfill', 'paper', 'mixed', 'e-waste', 'unknown'];
+            return `
+                <div class="editable-bin" data-index="${index}">
+                    <div class="bin-field">
+                        <label>Bin Label</label>
+                        <input type="text" class="bin-label" value="${bin.label || ''}" placeholder="e.g., left_black">
+                    </div>
+                    <div class="bin-field">
+                        <label>Bin Type</label>
+                        <select class="bin-type">
+                            ${binTypes.map(t => `<option value="${t}" ${bin.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="bin-field">
+                        <label>Color</label>
+                        <input type="text" class="bin-color" value="${bin.color || ''}" placeholder="e.g., blue, green, black">
+                    </div>
+                    <div class="bin-field">
+                        <label>Signage/Description</label>
+                        <input type="text" class="bin-sign" value="${bin.sign || ''}" placeholder="What goes in this bin">
+                    </div>
+                    <div class="bin-field">
+                        <label>Position</label>
+                        <select class="bin-pos">
+                            <option value="leftmost" ${bin.pos === 'leftmost' ? 'selected' : ''}>Leftmost</option>
+                            <option value="second_from_left" ${bin.pos === 'second_from_left' ? 'selected' : ''}>Second from Left</option>
+                            <option value="center" ${bin.pos === 'center' ? 'selected' : ''}>Center</option>
+                            <option value="second_from_right" ${bin.pos === 'second_from_right' ? 'selected' : ''}>Second from Right</option>
+                            <option value="rightmost" ${bin.pos === 'rightmost' ? 'selected' : ''}>Rightmost</option>
+                        </select>
+                    </div>
+                    <div class="bin-actions">
+                        <button type="button" class="btn-remove" onclick="removeBin(${index})">🗑️ Remove Bin</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function attachBinEventListeners() {
+            const setupBtn = document.getElementById('setupBtn');
+            if (setupBtn) {
+                setupBtn.addEventListener('click', handleSetup);
+            }
+        }
+        
+        function removeBin(index) {
+            if (confirm('Remove this bin from the configuration?')) {
+                currentBins.splice(index, 1);
+                refreshBinDisplay();
+            }
+        }
+        
+        function refreshBinDisplay() {
+            let html = '';
+            if (currentBins.length > 0) {
+                currentBins.forEach((bin, index) => {
+                    html += createEditableBinHtml(bin, index);
+                });
+            } else {
+                html = '<p style="color: #f44336; text-align: center; padding: 20px;">No bins remaining. Add at least one bin to continue.</p>';
+            }
+            
+            const editableBins = document.getElementById('editableBins');
+            if (editableBins) {
+                editableBins.innerHTML = html;
+            }
+            
+            const setupBtn = document.getElementById('setupBtn');
+            if (setupBtn) {
+                setupBtn.disabled = currentBins.length === 0;
+            }
+        }
+        
+        async function handleSetup() {
+            // Collect all bin data from form
+            const bins = [];
+            const binElements = document.querySelectorAll('.editable-bin');
+            
+            binElements.forEach((element) => {
+                const bin = {
+                    id: bins.length,
+                    label: element.querySelector('.bin-label').value || `bin_${bins.length}`,
+                    type: element.querySelector('.bin-type').value,
+                    color: element.querySelector('.bin-color').value || '',
+                    sign: element.querySelector('.bin-sign').value || '',
+                    pos: element.querySelector('.bin-pos').value,
+                    conf: 1.0
+                };
+                bins.push(bin);
+            });
+            
+            if (bins.length === 0) {
+                showResult('Please keep at least one bin', true);
+                return;
+            }
+            
+            const setupBtn = document.getElementById('setupBtn');
+            const setupResult = document.getElementById('setupResult');
+            
+            setupBtn.disabled = true;
+            setupBtn.textContent = 'Setting up...';
+            setupResult.innerHTML = '<div class="spinner"></div><p>Setting up bins...</p>';
+            
+            try {
+                const response = await fetch('/setup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        location: currentLocation,
+                        bins: bins,
+                        scene: currentScene,
+                        raw_response: currentRawResponse
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    setupResult.innerHTML = `
+                        <div style="padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
+                            <strong style="color: #2e7d32;">✅ ${data.message}</strong><br>
+                            <p style="margin-top: 10px; font-size: 13px; color: #666;">
+                                The main software has been notified and will reload with ${data.bins_count} bin(s).<br>
+                                You can now show trash to the camera and it will only suggest these bins.
+                            </p>
+                            <button type="button" id="readyToTestBtn" class="btn-setup" style="margin-top: 15px; background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);">
+                                🚀 Ready to Test - Start Camera System
+                            </button>
+                        </div>
+                    `;
+                    setupBtn.textContent = '✅ Set Up Complete!';
+                    
+                    // Attach event listener to "Ready to Test" button
+                    const readyBtn = document.getElementById('readyToTestBtn');
+                    if (readyBtn) {
+                        readyBtn.addEventListener('click', handleReadyToTest);
+                    }
+                } else {
+                    setupResult.innerHTML = `<p style="color: #f44336;">Error: ${data.error}</p>`;
+                    setupBtn.disabled = false;
+                    setupBtn.textContent = '✅ Set Up Bins';
+                }
+            } catch (error) {
+                setupResult.innerHTML = `<p style="color: #f44336;">Network error: ${error.message}</p>`;
+                setupBtn.disabled = false;
+                setupBtn.textContent = '✅ Set Up Bins';
+            }
+        }
+        
+        async function handleReadyToTest() {
+            const readyBtn = document.getElementById('readyToTestBtn');
+            const setupResult = document.getElementById('setupResult');
+            
+            if (!readyBtn) return;
+            
+            readyBtn.disabled = true;
+            readyBtn.textContent = 'Starting system...';
+            setupResult.innerHTML = '<div class="spinner"></div><p>Starting main system...</p>';
+            
+            try {
+                const response = await fetch('/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        location: currentLocation
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    setupResult.innerHTML = `
+                        <div style="padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;">
+                            <strong style="color: #1976d2;">🚀 ${data.message}</strong><br>
+                            <p style="margin-top: 10px; font-size: 13px; color: #666;">
+                                The camera system is starting! Check the terminal where main.py is running.<br>
+                                The system will automatically use the bins you just configured.
+                            </p>
+                            <p style="margin-top: 10px; font-size: 12px; color: #666; font-style: italic;">
+                                💡 Tip: The camera window will open automatically. Show trash items to test!
+                            </p>
+                        </div>
+                    `;
+                    readyBtn.textContent = '✅ System Started!';
+                } else if (data.already_running) {
+                    setupResult.innerHTML = `
+                        <div style="padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
+                            <strong style="color: #f57c00;">⚠️ ${data.message}</strong><br>
+                            <p style="margin-top: 10px; font-size: 13px; color: #666;">
+                                The main system is already running. It will automatically reload with your new bin configuration.
+                            </p>
+                        </div>
+                    `;
+                    readyBtn.textContent = '✅ System Already Running';
+                } else {
+                    setupResult.innerHTML = `<p style="color: #f44336;">Error: ${data.error || 'Unknown error'}</p>`;
+                    readyBtn.disabled = false;
+                    readyBtn.textContent = '🚀 Ready to Test - Start Camera System';
+                }
+            } catch (error) {
+                setupResult.innerHTML = `<p style="color: #f44336;">Network error: ${error.message}</p>`;
+                readyBtn.disabled = false;
+                readyBtn.textContent = '🚀 Ready to Test - Start Camera System';
+            }
         }
         
         function showResult(message, isError = false) {

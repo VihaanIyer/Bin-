@@ -17,7 +17,9 @@ load_dotenv()
 class TrashClassifier:
     def __init__(self):
         """
-        Initialize Gemini API client
+        Initialize Gemini API client and pick a fast, vision-capable model.
+        IMPORTANT: Create this ONCE and reuse it.
+        Do not re-create TrashClassifier on every frame.
         """
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
@@ -25,111 +27,48 @@ class TrashClassifier:
         
         genai.configure(api_key=api_key)
         
-        # List available models to find vision-capable ones
-        available_model_names = []
-        standard_vision_models = []  # Prioritize these
-        try:
-            available_models = genai.list_models()
-            for model in available_models:
-                model_name = model.name.replace('models/', '')
-                available_model_names.append(model_name)
-                # Check if model supports vision and is a standard model (not audio/specialized)
-                if hasattr(model, 'supported_generation_methods'):
-                    if 'generateContent' in model.supported_generation_methods:
-                        # Check if it's a standard vision model (exclude audio/specialized)
-                        is_standard = (
-                            any(x in model_name.lower() for x in ['flash', '1.5', '2.0', '2.5']) and
-                            'audio' not in model_name.lower() and
-                            'tts' not in model_name.lower() and
-                            'native-audio' not in model_name.lower() and
-                            'thinking' not in model_name.lower() and
-                            'robotics' not in model_name.lower()
-                        )
-                        if is_standard:
-                            standard_vision_models.append(model_name)
-                            print(f"Found standard vision model: {model_name}")
-        except Exception as e:
-            print(f"Could not list models: {e}")
-        
-        # Use available models - prioritize free-tier friendly models
-        # Build model list: prioritize models with better free tier quotas
-        model_attempts = []
-        
-        # First, prioritize free-tier friendly models (better quotas)
-        # Note: gemini-1.5-flash may not be available in v1beta, use 2.0+ models
-        free_tier_models = [
-            'gemini-2.0-flash',           # Good free tier quota, available in v1beta
-            'gemini-2.5-flash',           # Latest, available in v1beta
-            'gemini-1.5-flash',           # Try this if 2.0+ don't work
-            'gemini-1.5-pro',             # Decent free tier
+        # Ordered by preference: fast, vision-capable models first, then text fallback
+        preferred_models = [
+            'gemini-2.0-flash',
+            'gemini-2.5-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+            'gemini-pro-vision',
+            'gemini-pro',  # text-only fallback
         ]
-        
-        for model_name in free_tier_models:
-            if model_name not in model_attempts:
-                model_attempts.append(model_name)
-        
-        # Then add other standard vision models we found (but skip preview/exp models)
-        for model_name in standard_vision_models:
-            # Skip preview/experimental models (they have stricter quotas)
-            if 'preview' not in model_name.lower() and 'exp' not in model_name.lower():
-                if model_name not in model_attempts:
-                    model_attempts.append(model_name)
-        
-        # Then add known good models
-        known_good_models = [
-            'gemini-2.5-flash',           # Latest standard vision model
-            'gemini-2.0-flash-001',       # Specific version
-            'gemini-pro-vision',          # Legacy vision model
-        ]
-        
-        for model_name in known_good_models:
-            if model_name not in model_attempts:
-                model_attempts.append(model_name)
-        
-        # Finally, text-only fallback
-        model_attempts.append('gemini-pro')
         
         self.model = None
         self.model_name = None
         self.supports_vision = False
         
-        for model_name in model_attempts:
-            try:
-                # Skip audio/specialized models
-                if any(x in model_name.lower() for x in ['audio', 'tts', 'native-audio', 'thinking', 'robotics']):
-                    print(f"Skipping specialized model: {model_name}")
-                    continue
-                
-                # Try both with and without 'models/' prefix
-                model_variants = [model_name, f"models/{model_name}"]
-                loaded = False
-                
-                for variant in model_variants:
-                    try:
-                        self.model = genai.GenerativeModel(variant)
-                        self.model_name = model_name  # Store without prefix for display
-                        # Determine if it supports vision - standard flash/pro models do
-                        if any(x in model_name.lower() for x in ['vision', '1.5', 'flash', '2.0', '2.5']):
-                            self.supports_vision = True
-                        print(f"Successfully loaded model: {model_name} (vision support: {self.supports_vision})")
-                        loaded = True
-                        break
-                    except Exception as variant_error:
-                        continue
-                
-                if loaded:
+        for model_name in preferred_models:
+            for variant in (model_name, f"models/{model_name}"):
+                try:
+                    self.model = genai.GenerativeModel(variant)
+                    self.model_name = model_name
+                    # Basic heuristic for vision support
+                    if any(token in model_name.lower() for token in ['vision', 'flash', '1.5', '2.0', '2.5']):
+                        self.supports_vision = True
+                    print(f"Loaded Gemini model: {self.model_name} (vision support: {self.supports_vision})")
                     break
-            except Exception as e:
-                print(f"Failed to load {model_name}: {str(e)[:100]}")
-                continue
+                except Exception:
+                    continue
+            if self.model is not None:
+                break
         
         if self.model is None:
-            raise ValueError("Could not initialize any Gemini model. Please check your API key and model availability.")
+            raise ValueError("Could not initialize any Gemini model. Check your API key and model availability.")
+        
+        # Shared config for faster responses - optimized for 1-1.5s response time
+        self.generation_config_fast = {
+            "temperature": 0.1,  # Lower temperature for faster, more deterministic responses
+            "max_output_tokens": 128,  # Reduced for faster generation
+        }
         
         # Initialize for logging
         self.last_raw_response = ""
         
-        # Load bin layout metadata from JSON
+        # Load bin layout metadata from JSON (with location support)
         self.bin_layout = self._load_bin_layout()
         
         # Build system prompt based on actual bin layout
@@ -139,16 +78,60 @@ class TrashClassifier:
         self.bin_context = ""
         self.bin_layout_metadata = None
     
+    # ---------------------- helpers ---------------------- #
+    
+    @staticmethod
+    def _to_pil_and_downscale(image, max_dim: int = 512) -> Image.Image:
+        """
+        Convert numpy/OpenCV or PIL image to PIL and downscale to max_dim.
+        Optimized to 512px for faster API calls while maintaining accuracy.
+        """
+        if not isinstance(image, Image.Image):
+            if hasattr(image, "shape"):
+                import numpy as np  # local import
+                if len(image.shape) == 3 and image.shape[2] == 3:
+                    image_rgb = image[:, :, ::-1]  # BGR to RGB
+                    image = Image.fromarray(image_rgb)
+                else:
+                    image = Image.fromarray(image)
+            else:
+                raise TypeError("Unsupported image type for conversion to PIL.")
+        
+        w, h = image.size
+        if max(w, h) > max_dim:
+            scale = max_dim / float(max(w, h))
+            new_size = (int(w * scale), int(h * scale))
+            image = image.resize(new_size)
+        
+        return image
+    
     def _load_bin_layout(self):
         """
         Load bin layout metadata from JSON file
+        Supports location-specific files via BIN_LOCATION environment variable
         """
         try:
+            # Try location-specific file first
+            location = os.getenv('BIN_LOCATION', None)
+            if location:
+                location_file = os.path.join(os.path.dirname(__file__), f'bin_layout_{location}.json')
+                if os.path.exists(location_file):
+                    with open(location_file, 'r') as f:
+                        data = json.load(f)
+                        bins = data.get('bins', [])
+                        if bins:
+                            print(f"✅ Loaded {len(bins)} bins from location-specific file: {location_file}")
+                            return bins
+            
+            # Fallback to main metadata file
             json_path = os.path.join(os.path.dirname(__file__), 'bin_layout_metadata.json')
             if os.path.exists(json_path):
                 with open(json_path, 'r') as f:
                     data = json.load(f)
-                    return data.get('bins', [])
+                    bins = data.get('bins', [])
+                    if bins:
+                        print(f"✅ Loaded {len(bins)} bins from bin_layout_metadata.json")
+                        return bins
             else:
                 print(f"⚠️ bin_layout_metadata.json not found at {json_path}, using default bins")
                 return []
@@ -235,10 +218,16 @@ CRITICAL: Look at the IMAGE to determine if items are CLEAN or CONTAMINATED. Ana
                             image = Image.fromarray(image)
                 
                 # Use vision model with image
-                response = self.model.generate_content([prompt, image])
+                response = self.model.generate_content(
+                    [prompt, image],
+                    generation_config=self.generation_config_fast,
+                )
             else:
                 # Text-only classification
-                response = self.model.generate_content(prompt)
+                response = self.model.generate_content(
+                    prompt,
+                    generation_config=self.generation_config_fast,
+                )
             
             response_text = response.text
             
@@ -314,7 +303,10 @@ Respond:"""
         
         try:
             if self.supports_vision:
-                response = self.model.generate_content([prompt, image])
+                response = self.model.generate_content(
+                    [prompt, image],
+                    generation_config=self.generation_config_fast,
+                )
                 response_text = response.text.strip()
                 self.last_raw_response = response_text
                 
@@ -394,7 +386,10 @@ Examples:
 Your answer:"""
         
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(
+                prompt,
+                generation_config=self.generation_config_fast,
+            )
             response_text = response.text.strip()
             self.last_raw_response = response_text
             
@@ -448,16 +443,11 @@ Your answer:"""
         Returns:
             Dictionary with bin type and explanation
         """
-        # Convert numpy array to PIL Image if needed
-        if not isinstance(image, Image.Image):
-            if hasattr(image, 'shape'):  # numpy array
-                import numpy as np
-                # OpenCV uses BGR, PIL uses RGB
-                if len(image.shape) == 3 and image.shape[2] == 3:
-                    image_rgb = image[:, :, ::-1]  # BGR to RGB
-                    image = Image.fromarray(image_rgb)
-                else:
-                    image = Image.fromarray(image)
+        # Convert and downscale once
+        try:
+            image = self._to_pil_and_downscale(image)
+        except Exception as e:
+            print(f"Image conversion failed, continuing without resize: {e}")
         
         items_text = ""
         if detected_items:
@@ -467,6 +457,7 @@ Your answer:"""
         # Build bin descriptions from JSON
         bin_descriptions = []
         if self.bin_layout:
+            print(f"📋 Using {len(self.bin_layout)} configured bins for classification:")
             for bin_info in self.bin_layout:
                 bin_type = bin_info.get('type', '').upper()
                 color = bin_info.get('color', '')
@@ -476,61 +467,40 @@ Your answer:"""
                 if label:
                     bin_desc += f" [Label: {label}]"
                 bin_descriptions.append(bin_desc)
+                print(f"  ✓ {bin_type} bin - Color: {color}, Sign: {sign}")
         else:
             # Fallback descriptions
+            print("⚠️ No bin layout configured, using default bins")
             bin_descriptions = [
                 "- RECYCLING (blue): Clean recyclable materials",
                 "- COMPOST (green): Organic food waste",
                 "- LANDFILL (black/grey): Contaminated or non-recyclable items"
             ]
         
-        prompt = f"""EXAMINE THIS IMAGE VERY CAREFULLY. Look at each item's ACTUAL appearance, material, condition, and CONTEXT. Be precise and accurate.
-
-CRITICAL: ONLY identify items that are TRASH/WASTE meant for disposal. IGNORE personal items like:
-- Phones, electronics, devices, chargers
-- Hats, caps, beanies, clothing, accessories, GLOVES (work gloves, medical gloves, etc.)
-- Wallets, keys, personal belongings
-- Bags, backpacks, purses
-- Glasses, watches, jewelry
-- Any item clearly being held/used by a person that is NOT trash (like gloves on hands)
-
-ONLY classify items that are clearly waste/trash ready to be thrown away (food scraps, empty containers, used utensils, wrappers, etc.).
-
-ACCURACY CHECKLIST:
-- Is this item actually trash/waste? (NOT a personal item being used)
-- Can you clearly see it's meant for disposal? (NOT something the person is wearing/using)
-- Is it clearly visible in the image? (NOT a misidentification)
-- Look at the actual material and condition - don't guess based on color alone
+        prompt = f"""EXAMINE IMAGE. Identify TRASH/WASTE only. IGNORE: phones, hats, gloves, wallets, bags, personal items.
 
 {items_text}
 
-AVAILABLE BINS (use these exact rules from the facility):
+BINS:
 {chr(10).join(bin_descriptions)}
 
-CRITICAL - Match items to bins based on the rules above:
-- Read each bin's signage/rules carefully
-- Match items to the correct bin based on what the bin accepts
-- Check if items are CLEAN or CONTAMINATED from the image
-- Use the specific bin rules (e.g., landfill: "nothing except styrofoam and PPE", compost: "all food, napkins, compostables", recycle: "all paper, metal, plastic, wrappers")
-- For paper items, distinguish between mixed paper (newspapers, magazines, folders) and white paper (printer paper, notebook paper)
+RULES:
+- Check if items are CLEAN or CONTAMINATED from image
+- Match items to bins based on bin rules above
+- Clean recyclables → recycling, Food/organic → compost, Contaminated/non-recyclable → landfill
 
-RESPONSE FORMAT:
-- [item name] goes into [bin type] bin usually [color]
+FORMAT: [item] goes into [bin_type] bin usually [color]
 
 Examples:
-- plastic fork (if clean in image) → "plastic fork goes into recycle bin usually blue"
-- plastic fork (if dirty in image) → "dirty plastic fork goes into landfill usually black"
+- clean plastic fork → "plastic fork goes into recycle bin usually blue"
+- dirty plastic fork → "dirty plastic fork goes into landfill usually black"
 - pizza → "pizza goes into compost usually green"
-- clean paper plate → "paper plate goes into recycle usually blue"
-- greasy paper plate → "greasy paper plate goes into landfill usually black"
-
-IMPORTANT: 
-- Look at the ACTUAL IMAGE. See if items are clean or dirty. Don't guess - use what you see.
-- ONLY list items that are clearly TRASH/WASTE ready for disposal.
-- DO NOT list personal items (phones, caps, beanies, wallets, keys, bags, etc.).
-- If you see a person holding something, only classify it if it's clearly trash (like a used napkin, empty bottle, food wrapper), NOT if it's a personal item.
 
 List all trash items:"""
+        
+        # Log the prompt being sent (first 500 chars for brevity)
+        prompt_preview = prompt[:500] + "..." if len(prompt) > 500 else prompt
+        print(f"📝 Prompt sent to LLM (preview):\n{prompt_preview}\n")
         
         try:
             # Try vision API if model supports it
@@ -548,7 +518,10 @@ List all trash items:"""
                     # Send image to Gemini - standard format for vision models
                     print(f"📸 Sending image to {self.model_name} for analysis...")
                     # Standard format: [prompt, PIL_Image]
-                    response = self.model.generate_content([prompt, image])
+                    response = self.model.generate_content(
+                        [prompt, image],
+                        generation_config=self.generation_config_fast,
+                    )
                     response_text = response.text
                     print("✅ Vision API successful! Image analyzed by Gemini.")
                 except Exception as vision_error:
@@ -587,7 +560,10 @@ Items: {items_text}
 Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                     
                     try:
-                        response = self.model.generate_content(text_prompt)
+                        response = self.model.generate_content(
+                            text_prompt,
+                            generation_config=self.generation_config_fast,
+                        )
                         response_text = response.text
                     except Exception as e:
                         # If even text fails, use simple rule-based classification
@@ -630,7 +606,10 @@ Items: {items_text}
 Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                 
                 try:
-                    response = self.model.generate_content(text_prompt)
+                    response = self.model.generate_content(
+                        text_prompt,
+                        generation_config=self.generation_config_fast,
+                    )
                     response_text = response.text
                 except Exception as e:
                     # If API fails, use rule-based classification
@@ -736,17 +715,25 @@ Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                         else:
                             explanation = rest if rest else f"This goes in the {bin_type} bin."
                 
-                # If we found an item, add it
+                # If we found an item, add it (only if bin type exists in current layout)
                 if item_name:
-                    # Get bin name/label from bin_layout
-                    bin_name = self._get_bin_name_for_type(bin_type)
-                    items_classifications.append({
-                        'item': item_name,
-                        'bin_type': bin_type,
-                        'bin_name': bin_name,
-                        'bin_color': self._get_bin_color_for_type(bin_type),
-                        'explanation': explanation if explanation else f"This goes in the {bin_type} bin."
-                    })
+                    # Validate that this bin type exists in current bin_layout
+                    if self._bin_type_exists(bin_type):
+                        # Get bin name/label from bin_layout
+                        bin_name = self._get_bin_name_for_type(bin_type)
+                        bin_color = self._get_bin_color_for_type(bin_type)
+                        print(f"✅ Classified '{item_name}' → {bin_type.upper()} bin (Color: {bin_color})")
+                        items_classifications.append({
+                            'item': item_name,
+                            'bin_type': bin_type,
+                            'bin_name': bin_name,
+                            'bin_color': bin_color,
+                            'explanation': explanation if explanation else f"This goes in the {bin_type} bin."
+                        })
+                    else:
+                        # Bin type doesn't exist - skip this classification
+                        print(f"⚠️ Skipping classification to {bin_type} - bin not available in current layout")
+                        print(f"   Available bins: {', '.join([b.get('type', 'unknown') for b in (self.bin_layout or [])])}")
             
             # If no structured items found, try to extract from whole response
             if not items_classifications:
@@ -776,17 +763,21 @@ Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                 elif "black" in response_lower or "grey" in response_lower or "gray" in response_lower:
                     color = "black or grey"
                 
-                explanation = f"This goes in the {color} {bin_type} bin." if color else f"This goes in the {bin_type} bin."
-                
-                # Get bin name/label from bin_layout
-                bin_name = self._get_bin_name_for_type(bin_type)
-                items_classifications.append({
-                    'item': item_name,
-                    'bin_type': bin_type,
-                    'bin_name': bin_name,
-                    'bin_color': color if color else self._get_bin_color_for_type(bin_type),
-                    'explanation': explanation
-                })
+                # Only add if bin type exists in current layout
+                if self._bin_type_exists(bin_type):
+                    explanation = f"This goes in the {color} {bin_type} bin." if color else f"This goes in the {bin_type} bin."
+                    
+                    # Get bin name/label from bin_layout
+                    bin_name = self._get_bin_name_for_type(bin_type)
+                    items_classifications.append({
+                        'item': item_name,
+                        'bin_type': bin_type,
+                        'bin_name': bin_name,
+                        'bin_color': color if color else self._get_bin_color_for_type(bin_type),
+                        'explanation': explanation
+                    })
+                else:
+                    print(f"⚠️ Skipping classification to {bin_type} - bin not available in current layout")
             
             return items_classifications
         except Exception as e:
@@ -802,28 +793,37 @@ Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
                 'item': item_name
             }]
     
-    def _get_bin_name_for_type(self, bin_type):
+    def _bin_type_exists(self, bin_type):
         """
-        Get the bin name/label for a given bin type from the JSON layout
+        Check if a bin type exists in the current bin_layout
         """
         if not self.bin_layout:
-            # Fallback to bin_type if no layout
-            return bin_type
+            return True  # If no layout, allow all (fallback mode)
         
         bin_type_lower = bin_type.lower()
         for bin_info in self.bin_layout:
             if bin_info.get('type', '').lower() == bin_type_lower:
-                # Return a human-readable name based on label
+                return True
+        return False
+    
+    def _get_bin_name_for_type(self, bin_type):
+        """
+        Get the bin name/label for a given bin type from the JSON layout.
+        Only returns bins that exist in the current bin_layout.
+        """
+        if not self.bin_layout:
+            # Fallback to bin_type if no layout
+            return f"{bin_type} bin"
+        
+        bin_type_lower = bin_type.lower()
+        for bin_info in self.bin_layout:
+            if bin_info.get('type', '').lower() == bin_type_lower:
+                # Use the bin type directly to create a proper name
+                # e.g., "recycling" -> "recycling bin", "compost" -> "compost bin", "landfill" -> "landfill bin"
+                bin_name = f"{bin_type} bin"
                 label = bin_info.get('label', '')
-                if label:
-                    # Convert "blue_recycle" to "recycle bin" or "green_compost" to "compost bin"
-                    if '_' in label:
-                        parts = label.split('_')
-                        if len(parts) > 1:
-                            return f"{parts[-1]} bin"
-                    return f"{label} bin"
-                # Fallback to type
-                return f"{bin_type} bin"
+                print(f"  📦 Bin name for {bin_type}: '{bin_name}' (from label: {label})")
+                return bin_name
         
         # Default fallback
         return f"{bin_type} bin"
@@ -845,9 +845,12 @@ Respond fast in format: [item] goes into [bin_type] bin usually [color]"""
         bin_type_lower = bin_type.lower()
         for bin_info in self.bin_layout:
             if bin_info.get('type', '').lower() == bin_type_lower:
-                return bin_info.get('color', 'blue')
+                color = bin_info.get('color', 'blue')
+                print(f"  🎨 Bin color for {bin_type}: '{color}' (from JSON)")
+                return color
         
         # Default fallback
+        print(f"  ⚠️ Bin color for {bin_type}: 'blue' (fallback - bin not found in layout)")
         return 'blue'
     
     def _rule_based_classification(self, detected_items):
@@ -1144,7 +1147,10 @@ Instructions:
 Answer:"""
         
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(
+                prompt,
+                generation_config=self.generation_config_fast,
+            )
             response_text = response.text
             # Store for logging
             self.last_raw_response = response_text

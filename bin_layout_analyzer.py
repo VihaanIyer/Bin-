@@ -137,8 +137,25 @@ Return valid JSON only.
     def analyze_bins(self) -> Dict[str, Any]:
         """
         Run Gemini over the hardcoded image path and return parsed bin metadata.
+        This prefers the cached result if it exists, so you don't repeatedly
+        re-run the expensive vision call.
         """
+        # Fast path: use cached result if available
+        cached = self.load_cached_bins()
+        if cached is not None:
+            print(f"Using cached bin layout from {self.BIN_LAYOUT_OUTPUT_PATH.resolve()}")
+            return cached
+        
         image = self._ensure_pil_image(self.BIN_LAYOUT_IMAGE_PATH)
+        
+        # Optional: downscale the layout image so the one-time call is lighter.
+        # This should NOT be called per frame at runtime; it's a calibration step.
+        max_width = 1024
+        if hasattr(image, "width") and image.width > max_width:
+            new_height = int(image.height * max_width / image.width)
+            image = image.resize((max_width, new_height))
+            print(f"Resized layout image to {max_width}x{new_height} for analysis.")
+        
         return self._analyze_image(image)
 
     @classmethod

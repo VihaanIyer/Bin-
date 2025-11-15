@@ -89,6 +89,10 @@ class ObjectDetector:
         results = self.model(frame, verbose=False)
         detections = []
         
+        # Frame geometry for relative area checks
+        h, w = frame.shape[:2]
+        frame_area = float(w * h)
+        
         for result in results:
             boxes = result.boxes
             for box in boxes:
@@ -96,6 +100,27 @@ class ObjectDetector:
                 class_id = int(box.cls[0])
                 class_name = self.model.names[class_id]
                 confidence = float(box.conf[0])
+                
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                box_area = float((x2 - x1) * (y2 - y1))
+                
+                # -------------------------------
+                # SMART GLOVE FILTER
+                # -------------------------------
+                if class_name.lower() == "glove":
+                    # Tune these as needed
+                    MIN_CONF_GLOVE = 0.80     # require high confidence
+                    MAX_REL_AREA_GLOVE = 0.30 # gloves shouldn't cover 30%+ of frame
+                    is_low_conf = confidence < MIN_CONF_GLOVE
+                    is_too_big = box_area > MAX_REL_AREA_GLOVE * frame_area
+                    # If it's low confidence OR absurdly large, assume it's a hand
+                    if is_low_conf or is_too_big:
+                        # Skip this detection entirely
+                        continue
+                # -------------------------------
+                # END GLOVE FILTER
+                # -------------------------------
                 
                 # Filter out excluded classes (people, etc.)
                 if filter_trash_only:
@@ -112,9 +137,6 @@ class ObjectDetector:
                         if confidence < 0.6:
                             continue
                         # High confidence non-trash item - might be trash, include it
-                
-                # Get bounding box coordinates
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 
                 detections.append({
                     'class': class_name,

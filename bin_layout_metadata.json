@@ -2,52 +2,34 @@
   "bins": [
     {
       "id": 0,
-      "label": "left_black",
-      "type": "landfill",
-      "color": "black lid, gray body",
+      "label": "left_blue",
+      "type": "recycling",
+      "color": "dark blue",
+      "sign": "unclear",
       "pos": "leftmost",
-      "sign": "landfill: food scraps, disposable PPE",
-      "conf": 0.95
+      "conf": 1
     },
     {
       "id": 1,
       "label": "green_compost",
       "type": "compost",
-      "color": "green",
+      "color": "dark green",
+      "sign": "compost: food, napkins, compostables",
       "pos": "second_from_left",
-      "sign": "compost: all food, napkins",
-      "conf": 0.95
+      "conf": 1
     },
     {
       "id": 2,
-      "label": "blue_recycle",
-      "type": "recycling",
-      "color": "blue",
+      "label": "gray_landfill",
+      "type": "landfill",
+      "color": "light gray",
+      "sign": "landfill: soiled/wet single use disposable PPE",
       "pos": "center",
-      "sign": "plastics and metals",
-      "conf": 0.95
-    },
-    {
-      "id": 3,
-      "label": "blue_paper1",
-      "type": "paper",
-      "color": "blue",
-      "pos": "second_from_right",
-      "sign": "white paper",
-      "conf": 0.95
-    },
-    {
-      "id": 4,
-      "label": "blue_paper2",
-      "type": "paper",
-      "color": "blue",
-      "pos": "rightmost",
-      "sign": "white paper",
-      "conf": 0.95
+      "conf": 1
     }
   ],
-  "scene": "five waste bins in a row: landfill, compost, recycling, white paper, white paper",
-  "location": "budapest_hungary",
-  "location_name": "Budapest, Hungary",
-  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"left_black\",\n      \"type\": \"landfill\",\n      \"color\": \"black lid, gray body\",\n      \"pos\": \"leftmost\",\n      \"sign\": \"landfill: food scraps, disposable PPE\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 1,\n      \"label\": \"green_compost\",\n      \"type\": \"compost\",\n      \"color\": \"green\",\n      \"pos\": \"second_from_left\",\n      \"sign\": \"compost: all food, napkins\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 2,\n      \"label\": \"blue_recycle\",\n      \"type\": \"recycling\",\n      \"color\": \"blue\",\n      \"pos\": \"center\",\n      \"sign\": \"plastics and metals\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 3,\n      \"label\": \"blue_paper1\",\n      \"type\": \"paper\",\n      \"color\": \"blue\",\n      \"pos\": \"second_from_right\",\n      \"sign\": \"white paper\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 4,\n      \"label\": \"blue_paper2\",\n      \"type\": \"paper\",\n      \"color\": \"blue\",\n      \"pos\": \"rightmost\",\n      \"sign\": \"white paper\",\n      \"conf\": 0.95\n    }\n  ],\n  \"scene\": \"five waste bins in a row: landfill, compost, recycling, white paper, white paper\"\n}"
+  "location": "atlanta_ga_usa",
+  "location_name": "Atlanta, GA, USA",
+  "scene": "three bins in an office setting",
+  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"left_blue\",\n      \"type\": \"recycling\",\n      \"pos\": \"leftmost\",\n      \"color\": \"dark blue\",\n      \"sign\": \"unclear\",\n      \"conf\": 0.6\n    },\n    {\n      \"id\": 1,\n      \"label\": \"green_compost\",\n      \"type\": \"compost\",\n      \"pos\": \"second_from_left\",\n      \"color\": \"dark green\",\n      \"sign\": \"compost: food, napkins, compostables\",\n      \"conf\": 0.9\n    },\n    {\n      \"id\": 2,\n      \"label\": \"gray_landfill\",\n      \"type\": \"landfill\",\n      \"pos\": \"center\",\n      \"color\": \"light gray\",\n      \"sign\": \"landfill: soiled/wet single use disposable PPE\",\n      \"conf\": 0.9\n    }\n  ],\n  \"scene\": \"three bins in an office setting\"\n}"
 }

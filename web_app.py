@@ -3,6 +3,9 @@ Web application for uploading bin layout images and selecting locations
 """
 import os
 import json
+import time
+import subprocess
+import sys
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -100,7 +103,8 @@ def upload_file():
             'scene': result.get('scene', ''),
             'location': location,
             'location_name': LOCATIONS[location],
-            'location_file': location_file
+            'location_file': location_file,
+            'raw_response': result.get('raw_response', '')  # Include for editing
         })
         
     except Exception as e:
@@ -132,6 +136,148 @@ def get_layout(location):
         return jsonify(data)
     except Exception as e:
         return jsonify({'error': f'Error reading layout: {str(e)}'}), 500
+
+@app.route('/setup', methods=['POST'])
+def setup_bins():
+    """Finalize bin setup and notify main software to reload"""
+    try:
+        data = request.json
+        location = data.get('location')
+        bins = data.get('bins', [])
+        scene = data.get('scene', '')
+        
+        if not location or location not in LOCATIONS:
+            return jsonify({'error': 'Invalid location'}), 400
+        
+        if not bins:
+            return jsonify({'error': 'No bins provided'}), 400
+        
+        # Save final configuration
+        location_file = f"bin_layout_{location}.json"
+        result = {
+            'bins': bins,
+            'location': location,
+            'location_name': LOCATIONS[location],
+            'scene': scene,
+            'raw_response': data.get('raw_response', '')
+        }
+        
+        location_path = Path(location_file)
+        location_path.write_text(json.dumps(result, indent=2))
+        
+        # Also update main metadata file
+        main_path = Path("bin_layout_metadata.json")
+        main_path.write_text(json.dumps(result, indent=2))
+        
+        # Create reload signal file to notify main software
+        signal_path = Path("reload_signal.txt")
+        signal_path.write_text(str(time.time()))
+        
+        print(f"✅ Bin layout saved to {location_file}")
+        print(f"📡 Reload signal sent to main software")
+        print(f"📝 Main software will reload with {len(bins)} bins")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Bin layout saved! Main software will reload with {len(bins)} bins.',
+            'location': location,
+            'location_name': LOCATIONS[location],
+            'bins_count': len(bins)
+        })
+        
+    except Exception as e:
+        print(f"Error in setup: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Error saving configuration: {str(e)}'}), 500
+
+@app.route('/start', methods=['POST'])
+def start_main_system():
+    """Start the main.py system"""
+    try:
+        data = request.json
+        location = data.get('location')
+        
+        if not location or location not in LOCATIONS:
+            return jsonify({'error': 'Invalid location'}), 400
+        
+        # Check if main.py is already running
+        # Simple check: look for main.py process
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'python.*main.py'],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return jsonify({
+                    'success': False,
+                    'message': 'Main system is already running!',
+                    'already_running': True
+                })
+        except Exception:
+            # pgrep might not be available on all systems, continue anyway
+            pass
+        
+        # Get the directory where main.py is located
+        script_dir = Path(__file__).parent.absolute()
+        main_py_path = script_dir / 'main.py'
+        
+        if not main_py_path.exists():
+            return jsonify({'error': 'main.py not found'}), 404
+        
+        # Set environment variables
+        env = os.environ.copy()
+        env['BIN_LOCATION'] = location
+        
+        # Start main.py in a new process
+        # Use subprocess.Popen to run in background
+        try:
+            # Determine Python executable
+            python_exe = sys.executable
+            
+            # Start the process
+            # Note: We don't capture stdout/stderr so OpenCV windows can open properly
+            # The output will appear in the terminal where web_app.py is running
+            if sys.platform == 'darwin':  # macOS
+                # On macOS, use open to run in a new terminal window if needed
+                process = subprocess.Popen(
+                    [python_exe, str(main_py_path)],
+                    cwd=str(script_dir),
+                    env=env,
+                    start_new_session=True
+                )
+            else:
+                # On Linux/Windows, run directly
+                process = subprocess.Popen(
+                    [python_exe, str(main_py_path)],
+                    cwd=str(script_dir),
+                    env=env,
+                    stdout=None,  # Don't capture - let it print to terminal
+                    stderr=None,  # Don't capture - let it print to terminal
+                    start_new_session=True  # Detach from parent process
+                )
+            
+            print(f"✅ Started main.py (PID: {process.pid}) with BIN_LOCATION={location}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Main system started! Camera will open shortly.',
+                'pid': process.pid,
+                'location': location
+            })
+            
+        except Exception as e:
+            print(f"Error starting main.py: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Error starting main system: {str(e)}'}), 500
+        
+    except Exception as e:
+        print(f"Error in start: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     import socket

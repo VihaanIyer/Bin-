@@ -7,6 +7,8 @@ import cv2
 import time
 import threading
 import os
+import json
+from pathlib import Path
 from datetime import datetime
 from object_detector import ObjectDetector
 from gemini_classifier import TrashClassifier
@@ -172,6 +174,20 @@ class SmartTrashBin:
                         self.classifier.update_bin_context(self.bin_layout_metadata)
                         identified_bins = len(self.bin_layout_metadata.get("bins", [])) if isinstance(self.bin_layout_metadata, dict) else len(self.bin_layout_metadata or [])
                         Logger.log_system_event(f"Loaded {identified_bins} bins from location-specific file: {location_file}")
+                        
+                        # Log detailed bin information on initial load
+                        Logger.log_system_event("📋 BIN CONFIGURATION:")
+                        for i, bin_info in enumerate(self.bin_layout_metadata.get("bins", []), 1):
+                            bin_type = bin_info.get('type', 'unknown')
+                            color = bin_info.get('color', 'N/A')
+                            sign = bin_info.get('sign', 'N/A')
+                            label = bin_info.get('label', 'N/A')
+                            Logger.log_system_event(f"  Bin {i}: {bin_type.upper()} | Color: {color} | Sign: {sign} | Label: {label}")
+                        
+                        Logger.log_system_event("📋 Available bin types: " + ", ".join([
+                            bin_info.get('type', 'unknown') 
+                            for bin_info in self.bin_layout_metadata.get("bins", [])
+                        ]))
                 except Exception as e:
                     Logger.log_error(str(e), f"Loading location file {location_file}")
         
@@ -183,6 +199,20 @@ class SmartTrashBin:
                 self.classifier.update_bin_context(cached_layout)
                 cached_bins = len(cached_layout.get("bins", [])) if isinstance(cached_layout, dict) else len(cached_layout or [])
                 Logger.log_system_event(f"Loaded {cached_bins} bins from bin_layout_metadata.json.")
+                
+                # Log detailed bin information on initial load
+                Logger.log_system_event("📋 BIN CONFIGURATION:")
+                for i, bin_info in enumerate(cached_layout.get("bins", []), 1):
+                    bin_type = bin_info.get('type', 'unknown')
+                    color = bin_info.get('color', 'N/A')
+                    sign = bin_info.get('sign', 'N/A')
+                    label = bin_info.get('label', 'N/A')
+                    Logger.log_system_event(f"  Bin {i}: {bin_type.upper()} | Color: {color} | Sign: {sign} | Label: {label}")
+                
+                Logger.log_system_event("📋 Available bin types: " + ", ".join([
+                    bin_info.get('type', 'unknown') 
+                    for bin_info in cached_layout.get("bins", [])
+                ]))
             else:
                 Logger.log_system_event("No bin layout found. Please configure bins using the web app first.")
                 Logger.log_system_event("Run: python web_app.py and configure your bin layout")
@@ -207,7 +237,7 @@ class SmartTrashBin:
         
         # State management
         self.last_detection_time = 0
-        self.detection_cooldown = 2  # Reduced for faster response
+        self.detection_cooldown = 1.0  # Reduced for faster response
         self.current_item = None
         self.current_classifications = []  # Store all classifications
         self.processing_question = False
@@ -218,12 +248,87 @@ class SmartTrashBin:
         self.detected_bags = []  # Store detected bags
         self.current_bag_index = 0  # Track which bag we're asking about
         
+        # File watcher for bin layout reload
+        self.last_reload_time = 0
+        self.reload_signal_path = Path("reload_signal.txt")
+        
         Logger.log_system_event("System fully initialized and ready!")
+        Logger.log_system_event("Bin layout reload monitoring active - will auto-reload when web app updates bins")
         print("\n" + "="*80)
         print("SYSTEM READY - Automatic trash detection active")
         print("="*80)
         print("Controls: 'q' to quit")
         print("="*80 + "\n")
+    
+    def reload_bin_layout(self):
+        """
+        Reload bin layout from file without restarting the system
+        Called automatically when web app updates bin configuration
+        """
+        Logger.log_system_event("🔄 Reloading bin layout from file...")
+        
+        try:
+            # Reload location-specific or main metadata file
+            if self.location:
+                location_file = f"bin_layout_{self.location}.json"
+                if os.path.exists(location_file):
+                    with open(location_file, 'r') as f:
+                        self.bin_layout_metadata = json.load(f)
+                        # Update classifier with new bin layout
+                        self.classifier.bin_layout = self.classifier._load_bin_layout()
+                        self.classifier.system_prompt = self.classifier._build_system_prompt()
+                        self.classifier.update_bin_context(self.bin_layout_metadata)
+                        
+                        bin_count = len(self.bin_layout_metadata.get("bins", []))
+                        Logger.log_system_event(f"✅ Reloaded {bin_count} bins from {location_file}")
+                        
+                        # Log detailed bin information
+                        Logger.log_system_event("📋 BIN CONFIGURATION:")
+                        for i, bin_info in enumerate(self.bin_layout_metadata.get("bins", []), 1):
+                            bin_type = bin_info.get('type', 'unknown')
+                            color = bin_info.get('color', 'N/A')
+                            sign = bin_info.get('sign', 'N/A')
+                            label = bin_info.get('label', 'N/A')
+                            Logger.log_system_event(f"  Bin {i}: {bin_type.upper()} | Color: {color} | Sign: {sign} | Label: {label}")
+                        
+                        Logger.log_system_event("📋 Available bin types: " + ", ".join([
+                            bin_info.get('type', 'unknown') 
+                            for bin_info in self.bin_layout_metadata.get("bins", [])
+                        ]))
+                        return True
+            
+            # Fallback to main metadata
+            cached_layout = BinLayoutAnalyzer.load_cached_bins()
+            if cached_layout:
+                self.bin_layout_metadata = cached_layout
+                self.classifier.bin_layout = self.classifier._load_bin_layout()
+                self.classifier.system_prompt = self.classifier._build_system_prompt()
+                self.classifier.update_bin_context(cached_layout)
+                
+                bin_count = len(cached_layout.get("bins", []))
+                Logger.log_system_event(f"✅ Reloaded {bin_count} bins from bin_layout_metadata.json")
+                
+                # Log detailed bin information
+                Logger.log_system_event("📋 BIN CONFIGURATION:")
+                for i, bin_info in enumerate(cached_layout.get("bins", []), 1):
+                    bin_type = bin_info.get('type', 'unknown')
+                    color = bin_info.get('color', 'N/A')
+                    sign = bin_info.get('sign', 'N/A')
+                    label = bin_info.get('label', 'N/A')
+                    Logger.log_system_event(f"  Bin {i}: {bin_type.upper()} | Color: {color} | Sign: {sign} | Label: {label}")
+                
+                Logger.log_system_event("📋 Available bin types: " + ", ".join([
+                    bin_info.get('type', 'unknown') 
+                    for bin_info in cached_layout.get("bins", [])
+                ]))
+                return True
+            
+            Logger.log_system_event("⚠️ No bin layout file found to reload")
+            return False
+            
+        except Exception as e:
+            Logger.log_error(str(e), "Reloading bin layout")
+            return False
     
     def select_best_frame(self, frames):
         """
@@ -276,7 +381,7 @@ class SmartTrashBin:
                     start_time = time.time()  # Reset timer after answering
             except Exception as e:
                 Logger.log_error(str(e), "Question listening")
-                time.sleep(0.5)
+                time.sleep(0.2)
         
         self.listening_for_questions = False
         Logger.log_system_event("Question listening period ended")
@@ -328,7 +433,7 @@ class SmartTrashBin:
             # Multiple bags
             Logger.log_tts_output(f"I see {num_bags} trash bags. Let me ask about each one.")
             self.tts.speak(f"I see {num_bags} trash bags. Let me ask about each one.")
-            time.sleep(0.5)
+            time.sleep(0.2)
             
             bag_classifications = []
             
@@ -351,7 +456,7 @@ class SmartTrashBin:
                     response = f"Bag {i} goes into the {bin_name} usually {bin_color}."
                     Logger.log_tts_output(response)
                     self.tts.speak(response)
-                    time.sleep(0.3)
+                    time.sleep(0.15)
                     
                     bag_classifications.append({
                         'item': f"Bag {i} ({answer})",
@@ -363,7 +468,7 @@ class SmartTrashBin:
                 else:
                     Logger.log_system_event(f"No answer received for bag {i}.")
                     self.tts.speak(f"I couldn't hear your answer for bag {i}.")
-                    time.sleep(0.3)
+                    time.sleep(0.15)
             
             # Store all bag classifications
             self.current_classifications = bag_classifications
@@ -405,7 +510,7 @@ class SmartTrashBin:
             self.tts.speak(answer)
             # Continue listening for follow-up questions
             if self.listening_for_questions:
-                time.sleep(0.5)  # Brief pause before continuing to listen
+                time.sleep(0.2)  # Brief pause before continuing to listen
     
     def _process_detection_async(self, frame):
         """
@@ -525,7 +630,7 @@ class SmartTrashBin:
                 self.last_spoken_text.append(response)
                 Logger.log_tts_output(response)
                 self.tts.speak(response)
-                time.sleep(0.3)  # Shorter pause for faster response
+                time.sleep(0.15)  # Minimal pause for faster response
             # Add closing message after all items
             closing_msg = "If you have any questions, let me know. If you don't, have a great day."
             self.last_spoken_text.append(closing_msg)
@@ -577,12 +682,25 @@ class SmartTrashBin:
                 if not ret:
                     break
                 
+                # Check for bin layout reload signal (check every 30 frames to avoid overhead)
+                if frame_count % 30 == 0:
+                    if self.reload_signal_path.exists():
+                        try:
+                            signal_time = float(self.reload_signal_path.read_text())
+                            if signal_time > self.last_reload_time:
+                                self.reload_bin_layout()
+                                self.last_reload_time = signal_time
+                                # Remove signal file after processing
+                                self.reload_signal_path.unlink()
+                        except (ValueError, OSError) as e:
+                            Logger.log_error(str(e), "Reading reload signal")
+                
                 # Flip frame horizontally for mirror effect
                 frame = cv2.flip(frame, 1)
                 
-                # Run YOLOv8 person detection every 5 frames
+                # Run YOLOv8 person detection every 3 frames for quicker reactions
                 frame_count += 1
-                if frame_count % 5 == 0:
+                if frame_count % 3 == 0:
                     person_detected = self.detector.detect_person(frame)
                     
                     current_time = time.time()
@@ -592,37 +710,24 @@ class SmartTrashBin:
                     if person_detected and (not person_detected_last_frame or time_elapsed):
                         # Record detection time for timing measurement
                         self.person_detected_time = time.time()
-                        Logger.log_system_event("Person detected! Capturing 3 images to select best frame...")
+                        Logger.log_system_event("Person detected! Capturing image for analysis...")
                         
-                        # Capture 3 frames with small delays for better selection
-                        captured_frames = []
-                        for i in range(3):
-                            ret, capture_frame = cap.read()
-                            if ret:
-                                capture_frame = cv2.flip(capture_frame, 1)
-                                captured_frames.append(capture_frame.copy())
-                                if i < 2:  # Don't sleep after last capture
-                                    time.sleep(0.1)  # Small delay between captures
+                        # Use current frame directly for fastest response (no delay, no selection)
+                        # The frame is already good since we detected person on it
+                        snapshot_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         
-                        if captured_frames:
-                            # Select the best frame based on image quality
-                            best_frame = self.select_best_frame(captured_frames)
-                            if best_frame is not None:
-                                # Convert BGR to RGB for PIL
-                                snapshot_rgb = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
-                                
-                                # Analyze best image for trash using Gemini Vision (in background thread)
-                                if not self.processing_detection:
-                                    Logger.log_system_event("Starting background analysis of image...")
-                                    self.processing_detection = True
-                                    # Run analysis in background thread to prevent UI freeze
-                                    analysis_thread = threading.Thread(
-                                        target=self._process_detection_async,
-                                        args=(snapshot_rgb,),
-                                        daemon=True
-                                    )
-                                    analysis_thread.start()
-                                    last_classification_time = current_time
+                        # Analyze image for trash using Gemini Vision (in background thread)
+                        if not self.processing_detection:
+                            Logger.log_system_event("Starting background analysis of image...")
+                            self.processing_detection = True
+                            # Run analysis in background thread to prevent UI freeze
+                            analysis_thread = threading.Thread(
+                                target=self._process_detection_async,
+                                args=(snapshot_rgb,),
+                                daemon=True
+                            )
+                            analysis_thread.start()
+                            last_classification_time = current_time
                     
                     person_detected_last_frame = person_detected
                     
