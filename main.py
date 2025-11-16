@@ -321,9 +321,9 @@ class SmartTrashBin:
         
         # State management
         self.last_detection_time = 0
-        self.detection_cooldown = 2.0  # Cooldown between detections to prevent spam and reduce API calls
+        self.detection_cooldown = 0.5  # Short cooldown after classification to allow new detections
         self.last_trash_check_time = 0
-        self.trash_check_interval = 2.0  # Only check for trash every 2 seconds to reduce lag (increased from 0.5)
+        self.trash_check_interval = 0.1  # Very frequent checks for instant detection
         self.checking_trash = False  # Flag to prevent multiple simultaneous trash checks
         self.current_item = None
         self.current_classifications = []  # Store all classifications
@@ -447,6 +447,55 @@ class SmartTrashBin:
         Logger.log_system_event(f"Selected best frame from {len(frames)} captures (sharpness score: {best_score:.2f})")
         return best_frame
     
+    def _speak_with_interruption_listening(self, text):
+        """
+        Speak text while continuously listening for interruptions.
+        If user speaks while TTS is playing, stop TTS and process the input.
+        
+        Args:
+            text: Text to speak
+            
+        Returns:
+            True if interrupted, False if completed normally
+        """
+        if not text:
+            return False
+        
+        # Start speaking (non-blocking)
+        self.tts.speak(text, interruptible=True)
+        
+        # Wait a moment for TTS to start
+        time.sleep(0.05)  # Minimal delay for TTS initialization
+        
+        # While speaking, continuously listen for interruptions
+        interrupted = False
+        if self.voice_input:
+            Logger.log_system_event("Listening for interruptions while speaking...")
+            while self.tts.is_speaking:
+                try:
+                    # Use a short timeout to check frequently
+                    question = self.voice_input.listen_once(timeout=0.5)
+                    if question:
+                        Logger.log_system_event(f"Interruption detected: {question}")
+                        # Stop speaking immediately
+                        self.tts.stop_speaking()
+                        interrupted = True
+                        # Process the interruption as a question
+                        self._handle_question(question)
+                        break
+                except Exception as e:
+                    # Ignore timeout errors, continue listening
+                    if "timeout" not in str(e).lower() and "WaitTimeoutError" not in str(type(e).__name__):
+                        Logger.log_error(str(e), "Interruption listening")
+                # Small sleep to prevent CPU spinning
+                time.sleep(0.05)  # Reduced for faster response
+        
+        # Wait for TTS thread to finish (if not interrupted)
+        if not interrupted and self.tts.speak_thread and self.tts.speak_thread.is_alive():
+            self.tts.speak_thread.join()
+        
+        return interrupted
+    
     def _listen_for_questions(self, duration=2):
         """
         Listen for user questions for a specified duration
@@ -471,7 +520,7 @@ class SmartTrashBin:
                     start_time = time.time()  # Reset timer after answering
             except Exception as e:
                 Logger.log_error(str(e), "Question listening")
-                time.sleep(0.05)  # Optimized delay
+                # No delay - check immediately
         
         self.listening_for_questions = False
         Logger.log_system_event("Question listening period ended")
@@ -523,7 +572,7 @@ class SmartTrashBin:
             # Multiple bags
             Logger.log_tts_output(f"I see {num_bags} trash bags. Let me ask about each one.")
             self.tts.speak(f"I see {num_bags} trash bags. Let me ask about each one.")
-            time.sleep(0.05)  # Optimized delay
+            # No delay - speak immediately
             
             bag_classifications = []
             
@@ -546,7 +595,7 @@ class SmartTrashBin:
                     response = f"Bag {i} goes into the {bin_name} usually {bin_color}."
                     Logger.log_tts_output(response)
                     self.tts.speak(response)
-                    time.sleep(0.05)
+                    # No delay - speak immediately
                     
                     bag_classifications.append({
                         'item': f"Bag {i} ({answer})",
@@ -558,7 +607,7 @@ class SmartTrashBin:
                 else:
                     Logger.log_system_event(f"No answer received for bag {i}.")
                     self.tts.speak(f"I couldn't hear your answer for bag {i}.")
-                    time.sleep(0.05)
+                    # No delay - speak immediately
             
             # Store all bag classifications
             self.current_classifications = bag_classifications
@@ -596,125 +645,165 @@ class SmartTrashBin:
         else:
             # Relevant question - speak the answer
             Logger.log_tts_output(f"Answer: {answer}")
-            self.tts.speak(answer)
-            # Continue listening for follow-up questions
-            if self.listening_for_questions:
-                time.sleep(0.05)  # Optimized delay  # Brief pause before continuing to listen
+            interrupted = self._speak_with_interruption_listening(answer)
+            # Continue listening for follow-up questions (if not interrupted)
+            if self.listening_for_questions and not interrupted:
+                pass  # No delay - respond immediately
     
     def _check_trash_async(self, frame, check_time):
         """
-        Check for trash objects in background thread to prevent blocking main loop
+        First check with YOLOv8 (excluding person), then call Gemini Vision only if objects detected
         
         Args:
-            frame: Camera frame (numpy array in BGR format)
+            frame: Camera frame (numpy array in BGR format) - already captured
             check_time: Timestamp when check was initiated
         """
         try:
-            # Use Roboflow to detect trash objects (this can take time, so it's in background)
-            trash_detections = self.detector.detect_trash_objects(frame)
+            # First, use YOLOv8 to detect objects (excluding person) with 0.20 confidence threshold
+            Logger.log_system_event("Checking for objects with YOLOv8 (excluding person, min confidence: 0.20)...")
+            yolo_detections = self.detector.detect_objects(frame, filter_trash_only=True, min_confidence=0.20)
             
-            # Only trigger analysis if trash objects are detected
-            if trash_detections and len(trash_detections) > 0:
-                # Record detection time for timing measurement
-                self.person_detected_time = time.time()
-                Logger.log_system_event(f"Trash objects detected ({len(trash_detections)} items)! Analyzing image...")
-                
-                # Log detected items
-                for det in trash_detections:
-                    Logger.log_system_event(f"  - {det['class']} (confidence: {det['confidence']:.2f})")
-                
-                # Use current frame directly for fastest response
-                snapshot_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Analyze image for trash using Gemini Vision (in background thread)
-                Logger.log_system_event("Starting background analysis of image...")
-                self.processing_detection = True
-                # Run analysis in background thread to prevent UI freeze
-                analysis_thread = threading.Thread(
-                    target=self._process_detection_async,
-                    args=(snapshot_rgb,),
-                    daemon=True
-                )
-                analysis_thread.start()
+            # Only proceed if YOLOv8 detected objects (excluding person)
+            if not yolo_detections or len(yolo_detections) == 0:
+                Logger.log_system_event("No objects detected by YOLOv8 (excluding person). Skipping Gemini Vision.")
+                return
+            
+            # Log what YOLOv8 detected
+            Logger.log_system_event(f"YOLOv8 detected {len(yolo_detections)} object(s) (excluding person):")
+            for det in yolo_detections:
+                Logger.log_system_event(f"  - {det['class']} (confidence: {det['confidence']:.2f})")
+            
+            # Record detection time for timing measurement
+            self.person_detected_time = time.time()
+            
+            # Convert BGR to RGB (OpenCV uses BGR, PIL uses RGB)
+            # Make sure we're working with a fresh copy
+            snapshot_rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
+            
+            Logger.log_system_event(f"Objects detected! Calling Gemini Vision for classification...")
+            Logger.log_system_event(f"Frame shape: {snapshot_rgb.shape}, timestamp: {check_time}")
+            
+            # Now call Gemini Vision for accurate classification
+            self.processing_detection = True
+            
+            # Run analysis in background thread to prevent UI freeze
+            analysis_thread = threading.Thread(
+                target=self._process_detection_async,
+                args=(snapshot_rgb, yolo_detections),
+                daemon=True
+            )
+            analysis_thread.start()
         except Exception as e:
-            Logger.log_error(str(e), "Background trash detection")
+            Logger.log_error(f"Error in _check_trash_async: {str(e)}", "Background trash detection")
+            import traceback
+            Logger.log_error(traceback.format_exc(), "Background trash detection")
+            # Make sure flags are reset even on error
+            self.checking_trash = False
+            self.processing_detection = False
         finally:
+            # Reset checking_trash flag immediately after starting thread
+            # The processing_detection flag will be reset by the thread when done
             self.checking_trash = False
     
-    def _process_detection_async(self, frame):
+    def _process_detection_async(self, frame, yolo_detections=None):
         """
         Process detection in background thread to prevent UI freeze
         
         Args:
             frame: Camera frame (numpy array in RGB format)
+            yolo_detections: List of objects detected by YOLOv8 (optional)
         """
         try:
-            self.process_detection([], frame=frame)
+            self.process_detection([], frame=frame, yolo_detections=yolo_detections)
         except Exception as e:
             Logger.log_error(str(e), "Background detection processing")
         finally:
             self.processing_detection = False
     
-    def process_detection(self, food_items, frame=None):
+    def process_detection(self, food_items, frame=None, yolo_detections=None):
         """
         Process detected items and provide classification using vision
-        First checks for trash bags, then falls back to individual items
+        Analyzes the image directly for trash items (no bag detection)
+        Uses the same approach as web app bin layout analysis
         
         Args:
-            food_items: List of detected food items
-            frame: Current camera frame (numpy array)
+            food_items: List of detected food items (unused, kept for compatibility)
+            frame: Current camera frame (numpy array in RGB format)
+            yolo_detections: List of objects detected by YOLOv8 (optional, for hints)
         """
         if frame is None:
             Logger.log_error("No frame provided for analysis", "process_detection")
             return
 
-        # Set cooldown timestamp so main loop doesn't immediately re-trigger detection
-        self.last_classification_time = time.time()
+        # Clear previous classifications when starting new detection
+        self.current_classifications = []
+        self.current_item = None
         
-        # First, check for trash bags
-        Logger.log_system_event("Checking for trash bags in image...")
+        # Convert numpy array to PIL Image (same as web app does)
         try:
-            bags = self.classifier.detect_bags_in_image(frame)
-            Logger.log_system_event(f"Bag detection result: {len(bags)} bags found")
+            from PIL import Image
+            import numpy as np
+            
+            # Ensure frame is RGB numpy array
+            if not isinstance(frame, np.ndarray):
+                Logger.log_error("Frame is not a numpy array", "process_detection")
+                return
+            
+            # Convert to PIL Image (same method as web app)
+            # Frame is already RGB from cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) in _check_trash_async
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                # Already RGB, convert to PIL directly (no BGR conversion needed)
+                # Use .copy() to ensure we have a fresh array that won't be overwritten
+                frame_array = frame.copy().astype('uint8')
+                pil_image = Image.fromarray(frame_array, 'RGB')
+            else:
+                Logger.log_error(f"Invalid frame shape: {frame.shape}", "process_detection")
+                return
+            
+            Logger.log_system_event(f"Image converted to PIL: {pil_image.size}, mode: {pil_image.mode}")
+            
         except Exception as e:
-            Logger.log_error(str(e), "Bag detection")
-            bags = []
-        
-        # If bags detected, handle bag workflow
-        if bags and len(bags) > 0:
-            self.detected_bags = bags
-            self.current_bag_index = 0
-            Logger.log_system_event(f"Found {len(bags)} trash bag(s). Starting bag content questions...")
-            self._handle_bag_detection()
+            Logger.log_error(f"Image conversion error: {str(e)}", "process_detection")
             return
         
-        # No bags found, proceed with individual item detection
-        Logger.log_system_event("No bags detected. Analyzing image for individual trash items...")
-        if self.llm_debug_logs:
-            Logger.log_llm_request("Analyzing image for all visible trash/waste items", image_sent=True)
-        
-        # Use Gemini Vision to identify trash in the image
+        # Single photo, single scan - analyze immediately with Gemini Vision
+        # Use the same direct API call approach as web app
+        # Pass YOLOv8 detections as hints (optional)
         try:
-            classifications = self.classifier.classify_item_from_image(frame, detected_items=None)
-            raw_response = getattr(self.classifier, 'last_raw_response', 'Response received')
-            if self.llm_debug_logs:
-                Logger.log_llm_response(raw_response, classifications)
+            Logger.log_system_event("Calling Gemini Vision API to analyze image...")
+            # Convert YOLOv8 detections to format expected by classifier
+            detected_items = None
+            if yolo_detections:
+                detected_items = [{'class': det['class'], 'confidence': det['confidence']} for det in yolo_detections]
+            classifications = self.classifier.classify_item_from_image(pil_image, detected_items=detected_items)
+            
+            # Log the raw response for debugging
+            raw_response = getattr(self.classifier, 'last_raw_response', 'No response')
+            Logger.log_system_event(f"Gemini Vision response: {raw_response[:200]}...")
+            Logger.log_system_event(f"Found {len(classifications)} trash item(s)")
+            
         except Exception as e:
-            Logger.log_error(str(e), "Gemini Vision API call")
+            Logger.log_error(f"Gemini Vision API call failed: {str(e)}", "process_detection")
+            import traceback
+            Logger.log_error(traceback.format_exc(), "process_detection")
             classifications = []
         
         # Only proceed if trash items were actually found
         if not classifications or len(classifications) == 0:
-            Logger.log_system_event("No trash items found in image. No action taken.")
+            Logger.log_system_event("No trash items found in image")
+            # Set cooldown only when we actually processed (even if no trash found)
+            # This prevents rapid re-processing of the same frame
+            self.last_classification_time = time.time()
             return
         
         # Store classifications for display
         self.current_item = classifications[0]
         self.current_classifications = classifications
+        Logger.log_system_event(f"Successfully classified {len(classifications)} item(s)")
         
-        # Log classification summary (optional, can be noisy)
-        if self.llm_debug_logs:
-            Logger.log_classification_summary(classifications)
+        # Set cooldown timestamp AFTER successful classification
+        # This allows new detections after a short cooldown
+        self.last_classification_time = time.time()
         
         # Only speak if trash items were found
         # Helper function to get bin color
@@ -759,36 +848,41 @@ class SmartTrashBin:
         self.last_spoken_text = []
         
         if len(classifications) == 1:
-            # Single item - natural, fast response
+            # Single item - combine with closing message for no break
             item = classifications[0]
             bin_name, bin_color, bin_position = get_bin_info(item)
             # Use format: "item goes into [color] bin_name position"
             response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
-            self.last_spoken_text.append(response)
-            Logger.log_tts_output(response)
-            self.tts.speak(response)  # This is blocking, will wait for audio to finish
-            # Add closing message
             closing_msg = get_closing_message(self.language)
+            combined_response = f"{response}. {closing_msg}"
+            self.last_spoken_text.append(response)
             self.last_spoken_text.append(closing_msg)
-            Logger.log_tts_output(closing_msg)
-            self.tts.speak(closing_msg)  # This is blocking, will wait for audio to finish
+            Logger.log_tts_output(combined_response)
+            interrupted = self._speak_with_interruption_listening(combined_response)
+            if interrupted:
+                return  # User interrupted
         elif len(classifications) > 1:
-            # Multiple items - speak each one naturally
+            # Multiple items - combine all into one continuous speech to eliminate gaps
+            all_responses = []
             for i, item in enumerate(classifications, 1):
                 bin_name, bin_color, bin_position = get_bin_info(item)
                 response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
                 self.last_spoken_text.append(response)
-                Logger.log_tts_output(response)
-                self.tts.speak(response)  # This is blocking, will wait for audio to finish
-                # No sleep needed - TTS is already blocking
-            # Add closing message after all items
+                all_responses.append(response)
+            
+            # Combine all items with periods, then add closing message
+            combined_items = ". ".join(all_responses)
             closing_msg = get_closing_message(self.language)
+            combined_response = f"{combined_items}. {closing_msg}"
             self.last_spoken_text.append(closing_msg)
-            Logger.log_tts_output(closing_msg)
-            self.tts.speak(closing_msg)  # This is blocking, will wait for audio to finish
+            
+            Logger.log_tts_output(combined_response)
+            interrupted = self._speak_with_interruption_listening(combined_response)
+            if interrupted:
+                return  # User interrupted
         
-        # Listen for questions for 2 seconds after speaking
-        if self.voice_input:
+        # Listen for questions for 2 seconds after speaking (if not interrupted)
+        if self.voice_input and not interrupted:
             self._listen_for_questions(2)
     
     
@@ -821,8 +915,8 @@ class SmartTrashBin:
         frame_count = 0
         # No longer tracking person detection - using trash detection instead
         
-        Logger.log_system_event("Camera started. Using Roboflow YOLOv8 for trash detection!")
-        Logger.log_system_event("When trash objects are detected, image will be analyzed using Gemini Vision for accurate classification!")
+        Logger.log_system_event("Camera started. Using YOLOv8 for object detection (excluding person)!")
+        Logger.log_system_event("When objects are detected by YOLOv8, image will be analyzed using Gemini Vision for accurate classification!")
         Logger.log_system_event("Controls: 'q' to quit")
         
         try:
@@ -847,7 +941,7 @@ class SmartTrashBin:
                 # Flip frame horizontally for mirror effect
                 frame = cv2.flip(frame, 1)
                 
-                # Run Roboflow YOLOv8 trash detection with throttling to reduce lag
+                # Check for trash using Gemini Vision directly (instant detection)
                 frame_count += 1
                 current_time = time.time()
                 time_elapsed = current_time - self.last_classification_time > self.detection_cooldown
@@ -863,9 +957,12 @@ class SmartTrashBin:
                     self.last_trash_check_time = current_time
                     self.checking_trash = True
                     
-                    # Run Roboflow detection in background thread to prevent blocking
-                    # Capture current frame for the thread
+                    # CRITICAL: Make a deep copy of the frame to prevent it from being overwritten
+                    # by subsequent camera reads in the main loop
                     frame_copy = frame.copy()
+                    
+                    # Capture single clear photo and analyze immediately
+                    # Pass a copy so the frame doesn't get overwritten by new camera reads
                     trash_check_thread = threading.Thread(
                         target=self._check_trash_async,
                         args=(frame_copy, current_time),
@@ -874,13 +971,8 @@ class SmartTrashBin:
                     trash_check_thread.start()
                 
                 # Draw status indicator
-                if self.checking_trash:
-                    status_text = "Checking for trash..."
-                    cv2.putText(frame, status_text, 
-                              (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                elif self.processing_detection:
-                    status_text = "ANALYZING IMAGE..."
+                if self.processing_detection:
+                    status_text = "ANALYZING..."
                     cv2.putText(frame, status_text, 
                               (10, 30), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)

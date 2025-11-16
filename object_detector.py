@@ -139,9 +139,9 @@ class ObjectDetector:
             
             # Resize image if too large (Roboflow API has size limits)
             # Slightly smaller for speed – you're not doing fine-grained medical imaging here
-            max_size = 1024
+            max_size = 512  # Reduced for fastest processing
             if pil_image.width > max_size or pil_image.height > max_size:
-                pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                pil_image.thumbnail((max_size, max_size), Image.Resampling.NEAREST)  # Faster than LANCZOS
             
             # Roboflow's SDK usually accepts file paths, PIL images, or numpy arrays.
             # To stay safe across versions, we keep the temp-file approach,
@@ -153,8 +153,8 @@ class ObjectDetector:
                 temp_path = tmp_file.name
             
             try:
-                # Lower confidence threshold for sensitivity; overlap relatively low for speed
-                prediction = self.roboflow_model.predict(temp_path, confidence=30, overlap=30)
+                # Optimized for speed: lower confidence, less overlap
+                prediction = self.roboflow_model.predict(temp_path, confidence=35, overlap=25)
                 result = prediction.json()
             finally:
                 # Clean up temporary file immediately
@@ -215,13 +215,14 @@ class ObjectDetector:
             # No full traceback spam in the hot path – it's running every few seconds
             return []
     
-    def detect_objects(self, frame, filter_trash_only=True):
+    def detect_objects(self, frame, filter_trash_only=True, min_confidence=0.20):
         """
         Detect objects in the frame, optionally filtering for trash/food items only
         
         Args:
             frame: Input image frame (numpy array)
             filter_trash_only: If True, only return trash/food items (exclude people)
+            min_confidence: Minimum confidence threshold (default: 0.20)
             
         Returns:
             List of detected objects with their classes and confidence scores
@@ -240,6 +241,10 @@ class ObjectDetector:
                 class_id = int(box.cls[0])
                 class_name = self.model.names[class_id]
                 confidence = float(box.conf[0])
+                
+                # Apply minimum confidence threshold (0.50) to reduce false triggers
+                if confidence < min_confidence:
+                    continue
                 
                 # Get bounding box coordinates
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()

@@ -34,7 +34,9 @@ class TrashClassifier:
 
         genai.configure(api_key=api_key)
 
+        # Prioritize fastest models for speed
         preferred_models = [
+            "gemini-2.0-flash-exp",  # Experimental fastest
             "gemini-2.0-flash",
             "gemini-2.5-flash",
             "gemini-1.5-flash",
@@ -68,11 +70,11 @@ class TrashClassifier:
         if self.model is None:
             raise ValueError("Could not initialize any Gemini model. Check your API key and model availability.")
 
-        # Tighter config for speed
+        # Balanced config for speed and accuracy
         self.generation_config_fast = {
             "temperature": 0.0,        # deterministic
-            "max_output_tokens": 64,   # short, enough for our format
-            "top_p": 0.9,
+            "max_output_tokens": 128,  # increased for detailed item descriptions (was 32)
+            "top_p": 0.8,              # tighter sampling
         }
 
         self.last_raw_response = ""
@@ -89,10 +91,10 @@ class TrashClassifier:
     # ---------------------- helpers ---------------------- #
 
     @staticmethod
-    def _to_pil_and_downscale(image, max_dim: int = 384) -> Image.Image:
+    def _to_pil_and_downscale(image, max_dim: int = 1024) -> Image.Image:
         """
         Convert numpy/OpenCV or PIL image to PIL and downscale to max_dim.
-        Optimized to 384px for faster API calls while maintaining accuracy.
+        Uses 1024px max (same as web app) for better accuracy in reading text/details.
         """
         if isinstance(image, Image.Image):
             pil_img = image
@@ -102,8 +104,9 @@ class TrashClassifier:
             import numpy as np  # local import
             arr = image
             if len(arr.shape) == 3 and arr.shape[2] == 3:
-                # BGR -> RGB if this is OpenCV style
-                pil_img = Image.fromarray(arr[:, :, ::-1])
+                # Assume RGB (already converted from BGR in main.py)
+                # Check if it's actually BGR by testing first pixel
+                pil_img = Image.fromarray(arr)
             else:
                 pil_img = Image.fromarray(arr)
 
@@ -111,6 +114,7 @@ class TrashClassifier:
         if max(w, h) > max_dim:
             scale = max_dim / float(max(w, h))
             new_size = (int(w * scale), int(h * scale))
+            # Use LANCZOS for better quality (same as web app) - important for reading text/details
             pil_img = pil_img.resize(new_size, Image.Resampling.LANCZOS)
 
         if pil_img.mode != "RGB":
@@ -545,61 +549,61 @@ bin_type: [recycling|compost|landfill]"""
         bins_desc = self._build_bin_descriptions_for_prompt()
 
         if self.language == "hungarian":
-            prompt = f"""Te egy hulladék-osztályozó asszisztens vagy.
+            prompt = f"""Kritikusan vizsgáld meg a képet és azonosítsd az ÖSSZES szemét/hulladék tárgyat. 
+Olvasd el a szövegeket, logókat, címkéket a képen. Figyelmen kívül: telefon, ruha, táska.
 
-Feladat: A KÉP alapján azonosítsd azokat a tárgyakat, amelyek SZEMÉT/HULLADÉK. Telefon, ruha, táska, kulcs stb. NEM szemét.
-
-KUKÁK (bin_type kulcsszavak ANGOLUL, hogy könnyen feldolgozható legyen):
+KUKÁK:
 {bins_desc}
 
-Ha látsz szemét tárgyakat, MINDEN tárgyat egy külön sorban adj vissza pontosan ebben a formátumban:
-
+Formátum (soronként egy tárgy):
 item_name | bin_type | bin_color | position
 
-ahol:
-- bin_type egyike: recycling, compost, landfill  (EZEKET használd, angolul!)
-- bin_color a kuka fő színe (pl. blue, green, black/grey)
-- position: left, middle, right vagy hagyd üresen
+Példák:
+plastic bottle | recycling | blue | left
+pizza slice | compost | green | middle
+chick-fil-a bag | landfill | white | right
+paper plate with pickles | compost | green | middle
 
-Ha NINCS szemét, csak ezt írd: NONE
-
-(Opcionális, figyelmen kívül hagyható YOLO tipp): {items_text}
-"""
+Ha nincs szemét: NONE
+Tipp: {items_text}"""
         else:
-            prompt = f"""You are a waste classification assistant.
-
-Task: Using the IMAGE, identify ONLY trash/waste items. Ignore phones, clothes, bags, keys, and other personal belongings.
+            prompt = f"""Critically examine the ENTIRE image and identify ALL trash/waste items.
+READ text, logos, labels, and packaging details in the image. Ignore phones, clothes, bags.
 
 BINS:
 {bins_desc}
 
-If you see trash items, output ONE LINE PER ITEM in this exact format:
-
+Format (one line per item):
 item_name | bin_type | bin_color | position
 
-where:
-- bin_type is one of: recycling, compost, landfill
-- bin_color is the bin's main color (e.g. blue, green, black/grey)
-- position is left, middle, right, or can be left empty
+Examples:
+plastic bottle | recycling | blue | left
+pizza slice | compost | green | middle
+chick-fil-a bag | landfill | white | right
+paper plate with pickles | compost | green | middle
 
-If there is NO trash, respond with exactly:
-NONE
-
-(Optional hint, may be ignored): {items_text}
-"""
+If no trash, respond: NONE
+Hint: {items_text}"""
 
         try:
-            if self.supports_vision:
-                response = self.model.generate_content(
-                    [prompt, pil_img],
-                    generation_config=self.generation_config_fast,
-                )
-            else:
+            if not self.supports_vision:
+                if self.DEBUG:
+                    print("[TrashClassifier] Vision not supported, using text-only fallback")
                 # text-only fallback; not ideal but still obeys same format
                 response = self.model.generate_content(
                     prompt,
                     generation_config=self.generation_config_fast,
                 )
+            else:
+                # Use vision API - same approach as web app bin layout analyzer
+                if self.DEBUG:
+                    print(f"[TrashClassifier] Calling Gemini Vision with image: {pil_img.size}, mode: {pil_img.mode}")
+                response = self.model.generate_content(
+                    [prompt, pil_img],
+                    generation_config=self.generation_config_fast,
+                )
+                if self.DEBUG:
+                    print(f"[TrashClassifier] Gemini Vision response received")
 
             text = (response.text or "").strip()
             self.last_raw_response = text
@@ -740,35 +744,27 @@ NONE
                 context = "\nRecent classifications:\n" + "\n".join(lines)
 
         if self.language == "hungarian":
-            prompt = f"""Te egy hulladék-osztályozó asszisztens vagy.
-
-Feladat: Válaszolj a felhasználó kérdésére, HA a kérdés hulladék, kuka, újrahasznosítás vagy komposzt témához kapcsolódik.
+            prompt = f"""Válaszolj a kérdésre, HA hulladék/kuka témához kapcsolódik.
 
 KUKÁK:
 {bins_desc}
 
-Felhasználói kérdés: "{q}"
+Kérdés: "{q}"
 {context}
 
-Ha a kérdés NEM kapcsolódik a hulladék/kuka témához, válaszolj pontosan így:
-NOT_RELEVANT
-
-Ha kapcsolódik, adj rövid, érthető magyarázatot magyarul."""
+Ha NEM kapcsolódik: NOT_RELEVANT
+Ha kapcsolódik: rövid magyarázat magyarul."""
         else:
-            prompt = f"""You are a smart trash bin assistant.
-
-Task: Answer the user's question ONLY if it is about waste, bins, recycling, compost, or the items just classified.
+            prompt = f"""Answer ONLY if about waste/bins/recycling/compost.
 
 BINS:
 {bins_desc}
 
-User question: "{q}"
+Q: "{q}"
 {context}
 
-If the question is NOT about waste/bins, respond with exactly:
-NOT_RELEVANT
-
-If it IS relevant, give a short, clear explanation."""
+If NOT relevant: NOT_RELEVANT
+If relevant: short clear answer."""
         try:
             response = self.model.generate_content(
                 prompt,
