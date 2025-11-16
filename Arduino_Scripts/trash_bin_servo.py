@@ -1,152 +1,119 @@
 #!/usr/bin/env python3
 """
-Trash Bin Servo Control Script
-Controls a servo motor connected to an Arduino based on trash bin type.
+Trash Bin Servo Control
+Controls servo motors on multiple Arduinos based on bin layout JSON.
 """
 
 import serial
 import time
-import sys
+import json
+import os
+from pathlib import Path
+from typing import Dict, Optional
 
 
-class TrashBinServoController:
-    def __init__(self, port='/dev/ttyUSB0', baudrate=9600):
+class MultiArduinoServoController:
+    """Controller for multiple Arduinos, each controlling one servo."""
+    
+    def __init__(self, arduino_configs: Dict[str, Dict], baudrate=9600):
         """
-        Initialize the servo controller.
-        
         Args:
-            port: Serial port where Arduino is connected (e.g., '/dev/ttyUSB0' on Linux, 
-                  'COM3' on Windows, '/dev/tty.usbserial-*' on macOS)
-            baudrate: Communication speed (default: 9600)
+            arduino_configs: {'arduino_1': {'port': '/dev/tty.usbmodem14101'}, ...}
+            baudrate: Serial communication speed (default: 9600)
         """
-        self.port = port
+        self.arduino_configs = arduino_configs
         self.baudrate = baudrate
-        self.arduino = None
+        self.arduinos: Dict[str, serial.Serial] = {}
         
-    def connect(self):
-        """Establish connection with Arduino."""
+        # Load bin layout and build mapping
+        self.bin_layout = self._load_bin_layout()
+        self.bin_to_arduino = self._build_mapping()
+    
+    def _load_bin_layout(self) -> Optional[Dict]:
+        """Load bin layout from JSON file."""
+        base_dir = Path(__file__).parent.parent
+        
+        # Try location-specific file
+        location = os.getenv('BIN_LOCATION')
+        if location:
+            path = base_dir / f"bin_layout_{location}.json"
+            if path.exists():
+                with open(path, 'r') as f:
+                    return json.load(f)
+        
+        # Fallback to main metadata
+        path = base_dir / "bin_layout_metadata.json"
+        if path.exists():
+            with open(path, 'r') as f:
+                return json.load(f)
+        
+        return None
+    
+    def _build_mapping(self) -> Dict[str, str]:
+        """Map bin types to Arduino names."""
+        if not self.bin_layout or 'bins' not in self.bin_layout:
+            return {}
+        
+        mapping = {}
+        arduino_names = list(self.arduino_configs.keys())
+        
+        for i, bin_data in enumerate(self.bin_layout['bins']):
+            bin_type = bin_data.get('type', '').lower()
+            if bin_type:
+                mapping[bin_type] = arduino_names[i % len(arduino_names)]
+        
+        return mapping
+    
+    def connect_all(self) -> Dict[str, bool]:
+        """Connect to all Arduinos. Returns connection status dict."""
+        status = {}
+        for name, config in self.arduino_configs.items():
+            port = config.get('port')
+            if not port:
+                status[name] = False
+                continue
+            try:
+                self.arduinos[name] = serial.Serial(port, self.baudrate, timeout=1)
+                time.sleep(2)
+                status[name] = True
+            except:
+                status[name] = False
+        return status
+    
+    def disconnect_all(self):
+        """Close all Arduino connections."""
+        for arduino in self.arduinos.values():
+            if arduino and arduino.is_open:
+                arduino.close()
+        self.arduinos.clear()
+    
+    def move_servo_up(self, bin_type: str) -> bool:
+        """Move servo to 90 degrees (open)."""
+        return self._send_command(bin_type, 90)
+    
+    def move_servo_down(self, bin_type: str) -> bool:
+        """Move servo to 0 degrees (closed)."""
+        return self._send_command(bin_type, 0)
+    
+    def open_bin(self, bin_type: str, duration: float = 2.0) -> bool:
+        """Open bin, wait, then close."""
+        if not self.move_servo_up(bin_type):
+            return False
+        time.sleep(duration)
+        return self.move_servo_down(bin_type)
+    
+    def _send_command(self, bin_type: str, angle: int) -> bool:
+        """Send servo command to Arduino."""
+        arduino_name = self.bin_to_arduino.get(bin_type.lower())
+        if not arduino_name or arduino_name not in self.arduinos:
+            return False
+        
+        arduino = self.arduinos[arduino_name]
+        if not arduino.is_open:
+            return False
+        
         try:
-            self.arduino = serial.Serial(self.port, self.baudrate, timeout=1)
-            time.sleep(2)  # Wait for Arduino to initialize
-            print(f"Connected to Arduino on {self.port}")
+            arduino.write(f"SERVO:{angle}\n".encode())
             return True
-        except serial.SerialException as e:
-            print(f"Error connecting to Arduino: {e}")
+        except:
             return False
-    
-    def disconnect(self):
-        """Close connection with Arduino."""
-        if self.arduino and self.arduino.is_open:
-            self.arduino.close()
-            print("Disconnected from Arduino")
-    
-    def _get_servo_pin(self, trash_bin_name):
-        """
-        Determine servo pin based on trash bin name.
-        
-        Args:
-            trash_bin_name: Name of the trash bin (string)
-            
-        Returns:
-            int: Pin number (9 or 10)
-        """
-        # Default mapping: You can modify this logic based on your needs
-        # For example, if trash bin contains "Green" -> pin 9, else -> pin 10
-        if "green" in trash_bin_name.lower():
-            return 9
-        else:
-            return 10
-    
-    def _send_command(self, pin, angle):
-        """
-        Send servo command to Arduino.
-        
-        Format: "SERVO:pin:angle" (e.g., "SERVO:9:90")
-        
-        Args:
-            pin: Servo pin number (9 or 10)
-            angle: Angle in degrees (0-180)
-        """
-        if not self.arduino or not self.arduino.is_open:
-            print("Error: Arduino not connected")
-            return False
-        
-        command = f"SERVO:{pin}:{angle}\n"
-        try:
-            self.arduino.write(command.encode())
-            print(f"Sent command: {command.strip()}")
-            return True
-        except Exception as e:
-            print(f"Error sending command: {e}")
-            return False
-    
-    def move_servo_up(self, trash_bin_name):
-        """
-        Move servo to 90 degrees (up position).
-        
-        Args:
-            trash_bin_name: Name of the trash bin
-        """
-        if "compost" not in trash_bin_name.lower():
-            print(f"'{trash_bin_name}' does not contain 'compost'. Servo will not move.")
-            return False
-        
-        pin = self._get_servo_pin(trash_bin_name)
-        print(f"Moving servo on pin {pin} to 90 degrees (up)")
-        return self._send_command(pin, 90)
-    
-    def move_servo_down(self, trash_bin_name):
-        """
-        Move servo to 0 degrees (down position).
-        
-        Args:
-            trash_bin_name: Name of the trash bin
-        """
-        if "compost" not in trash_bin_name.lower():
-            print(f"'{trash_bin_name}' does not contain 'compost'. Servo will not move.")
-            return False
-        
-        pin = self._get_servo_pin(trash_bin_name)
-        print(f"Moving servo on pin {pin} to 0 degrees (down)")
-        return self._send_command(pin, 0)
-
-
-def main():
-    """Example usage of the TrashBinServoController."""
-    # Example: "Green composte bin"
-    trash_bin = "Green composte bin"
-    
-    # Initialize controller
-    # NOTE: Update the port to match your Arduino's serial port
-    # On macOS, it's usually something like '/dev/tty.usbserial-*' or '/dev/tty.usbmodem*'
-    # On Windows, it's usually 'COM3', 'COM4', etc.
-    # On Linux, it's usually '/dev/ttyUSB0' or '/dev/ttyACM0'
-    controller = TrashBinServoController(port='/dev/tty.usbmodem14101')  # Update this!
-    
-    # Connect to Arduino
-    if not controller.connect():
-        print("Failed to connect. Please check:")
-        print("1. Arduino is connected via USB")
-        print("2. Correct serial port is specified")
-        print("3. Arduino sketch is uploaded and running")
-        return
-    
-    try:
-        # Move servo up
-        print("\n--- Moving servo UP ---")
-        controller.move_servo_up(trash_bin)
-        time.sleep(2)  # Wait for servo to move
-        
-        # Move servo down
-        print("\n--- Moving servo DOWN ---")
-        controller.move_servo_down(trash_bin)
-        time.sleep(2)  # Wait for servo to move
-        
-    finally:
-        # Disconnect
-        controller.disconnect()
-
-
-if __name__ == "__main__":
-    main()
-

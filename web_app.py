@@ -489,17 +489,54 @@ if __name__ == '__main__':
         except Exception:
             return "localhost"
     
+    # Enable HTTPS for camera access (Chrome requires HTTPS for camera/mic)
+    # Using Flask's built-in SSL context with self-signed certificate
+    ssl_context = None
+    cert_file = Path('cert.pem')
+    key_file = Path('key.pem')
+    
+    # Check if certificates exist, if not, create them
+    if not cert_file.exists() or not key_file.exists():
+        print("\n⚠️  No SSL certificates found. Generating self-signed certificate...")
+        print("   (You'll see a security warning in your browser - this is normal for development)")
+        try:
+            import subprocess
+            # Generate self-signed certificate
+            subprocess.run([
+                'openssl', 'req', '-x509', '-newkey', 'rsa:4096',
+                '-nodes', '-out', 'cert.pem', '-keyout', 'key.pem',
+                '-days', '365', '-subj', '/CN=localhost'
+            ], check=True, capture_output=True)
+            print("✅ Certificate generated successfully!")
+        except Exception as e:
+            print(f"⚠️  Could not generate certificate: {e}")
+            print("   Running without HTTPS (camera may not work in Chrome)")
+            print("   To fix: Install openssl or use Chrome flags (see instructions)")
+    else:
+        print("✅ Using existing SSL certificates")
+    
+    if cert_file.exists() and key_file.exists():
+        ssl_context = (str(cert_file), str(key_file))
+        print(f"\n🔒 HTTPS enabled! Access at: https://localhost:{port}")
+        print(f"   (You may see a security warning - click 'Advanced' → 'Proceed to localhost')")
+    else:
+        print(f"\n⚠️  Running on HTTP (camera may be blocked in Chrome)")
+        print(f"   Access at: http://localhost:{port}")
+    
     local_ip = get_local_ip()
+    protocol = 'https' if ssl_context else 'http'
     print(f"\n{'='*60}")
     print(f"🌐 Web App Accessible On:")
-    print(f"   Local:  http://localhost:{port}")
-    print(f"   Network: http://{local_ip}:{port}")
+    print(f"   Local:  {protocol}://localhost:{port}")
+    print(f"   Network: {protocol}://{local_ip}:{port}")
     print(f"{'='*60}")
     print(f"\n📱 To access from iPad:")
     print(f"   1. Make sure iPad is on the same Wi-Fi network")
     print(f"   2. Open Safari on iPad")
-    print(f"   3. Go to: http://{local_ip}:{port}")
+    print(f"   3. Go to: {protocol}://{local_ip}:{port}")
+    if ssl_context:
+        print(f"   4. Accept the security certificate (tap 'Advanced' → 'Proceed')")
     print(f"{'='*60}\n")
     
-    app.run(debug=True, host='0.0.0.0', port=port)
+    app.run(debug=True, host='0.0.0.0', port=port, ssl_context=ssl_context)
 
