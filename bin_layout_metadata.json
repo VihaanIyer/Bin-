@@ -2,25 +2,25 @@
   "bins": [
     {
       "id": 0,
-      "label": "blue_bin",
-      "type": "recycling",
-      "color": "dark blue",
-      "sign": "recycle",
+      "label": "left_green",
+      "type": "compost",
+      "color": "dark green",
+      "sign": "compost items",
       "pos": "leftmost",
       "conf": 1
     },
     {
       "id": 1,
-      "label": "green_bin",
-      "type": "compost",
-      "color": "dark green",
-      "sign": "compost",
+      "label": "right_blue",
+      "type": "recycling",
+      "color": "dark blue",
+      "sign": "recycling items",
       "pos": "rightmost",
       "conf": 1
     }
   ],
   "location": "atlanta_ga_usa",
   "location_name": "Atlanta, GA, USA",
-  "scene": "two bins: recycling and compost",
-  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"blue_bin\",\n      \"type\": \"recycling\",\n      \"pos\": \"center\",\n      \"color\": \"dark blue\",\n      \"sign\": \"recycle\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 1,\n      \"label\": \"green_bin\",\n      \"type\": \"compost\",\n      \"pos\": \"second_from_right\",\n      \"color\": \"dark green\",\n      \"sign\": \"compost\",\n      \"conf\": 0.95\n    }\n  ],\n  \"scene\": \"two bins: recycling and compost\"\n}"
+  "scene": "two bins: compost and recycling",
+  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"left_green\",\n      \"type\": \"compost\",\n      \"pos\": \"leftmost\",\n      \"color\": \"dark green\",\n      \"sign\": \"compost items\",\n      \"conf\": 0.95\n    },\n    {\n      \"id\": 1,\n      \"label\": \"center_blue\",\n      \"type\": \"recycling\",\n      \"pos\": \"second_from_left\",\n      \"color\": \"dark blue\",\n      \"sign\": \"recycling items\",\n      \"conf\": 0.95\n    }\n  ],\n  \"scene\": \"two bins: compost and recycling\"\n}"
 }

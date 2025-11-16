@@ -1229,11 +1229,37 @@ class SmartTrashBin:
         Logger.log_system_event("Controls: 'q' to quit")
         
         try:
+            consecutive_failures = 0
+            max_consecutive_failures = 10  # Allow up to 10 consecutive failures before giving up
+            
             while True:
                 ret, frame = cap.read()
                 if not ret:
-                    Logger.log_error("Camera stopped providing frames. Shutting down...", "Camera read")
-                    break
+                    consecutive_failures += 1
+                    Logger.log_error(f"Camera read failed (attempt {consecutive_failures}/{max_consecutive_failures}). Retrying...", "Camera read")
+                    
+                    if consecutive_failures >= max_consecutive_failures:
+                        Logger.log_error("Camera stopped providing frames after multiple retries. Shutting down...", "Camera read")
+                        break
+                    
+                    # Try to reinitialize camera after a few failures
+                    if consecutive_failures == 5:
+                        Logger.log_system_event("Attempting to reinitialize camera...")
+                        cap.release()
+                        time.sleep(1)  # Give camera time to reset
+                        cap = cv2.VideoCapture(CAMERA_INDEX)
+                        if not cap.isOpened():
+                            Logger.log_error("Failed to reinitialize camera. Shutting down...", "Camera reinitialization")
+                            break
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        Logger.log_system_event("Camera reinitialized successfully")
+                    
+                    time.sleep(0.1)  # Brief pause before retry
+                    continue
+                
+                # Reset failure counter on successful read
+                consecutive_failures = 0
                 
                 # Check for bin layout reload signal (check every 30 frames to avoid overhead)
                 if frame_count % 30 == 0:
