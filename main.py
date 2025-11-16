@@ -346,6 +346,27 @@ class SmartTrashBin:
         self.last_reload_time = 0
         self.reload_signal_path = Path("reload_signal.txt")
         
+        # Insights tracking
+        self.insights_data = {
+            'items': [],  # List of all classified items
+            'bin_counts': {},  # Count of items per bin type
+            'contamination': {},  # Items that went to wrong bins
+            'start_time': time.time()
+        }
+        
+        # Initialize bin counts and contamination tracking from bin layout
+        if self.bin_layout_metadata:
+            for bin_info in self.bin_layout_metadata.get('bins', []):
+                bin_type = bin_info.get('type', '').lower()
+                self.insights_data['bin_counts'][bin_type] = 0
+                self.insights_data['contamination'][bin_type] = {
+                    'wrong_items': [],
+                    'total_items': 0
+                }
+        
+        # Initialize insights file
+        self.save_insights_data()
+        
         Logger.log_system_event("System fully initialized and ready!")
         Logger.log_system_event("Bin layout reload monitoring active - will auto-reload when web app updates bins")
         print("\n" + "="*80)
@@ -380,6 +401,14 @@ class SmartTrashBin:
                         return bin_info
         
         return None
+    
+    def save_insights_data(self):
+        """Save insights data to JSON file for web app to read"""
+        insights_file = Path("insights_data.json")
+        try:
+            insights_file.write_text(json.dumps(self.insights_data, indent=2))
+        except Exception as e:
+            Logger.log_error(f"Failed to save insights: {e}", "save_insights_data")
     
     def reload_bin_layout(self):
         """
@@ -831,6 +860,80 @@ class SmartTrashBin:
         self.current_item = classifications[0]
         self.current_classifications = classifications
         Logger.log_system_event(f"Successfully classified {len(classifications)} item(s)")
+        
+        # Track items for insights
+        for item in classifications:
+            item_name = item.get('item', 'unknown')
+            preferred_bin_type = item.get('bin_type', '').lower()
+            bin_available = item.get('bin_available', True)
+            alternative_bin = item.get('alternative_bin')
+            
+            # Determine actual bin the item went to
+            actual_bin_type = preferred_bin_type
+            is_contaminated = False
+            
+            if not bin_available:
+                if alternative_bin:
+                    # Item went to alternative bin (acceptable)
+                    actual_bin_type = alternative_bin.get('bin_type', '').lower()
+                    # Check if this is contamination (wrong bin) or acceptable alternative
+                    if preferred_bin_type != actual_bin_type:
+                        # This is an acceptable alternative, not contamination
+                        pass
+                else:
+                    # No bin available - mark as contamination
+                    is_contaminated = True
+            elif alternative_bin:
+                # Item went to alternative bin instead of preferred
+                actual_bin_type = alternative_bin.get('bin_type', '').lower()
+                if preferred_bin_type != actual_bin_type:
+                    # This is acceptable alternative (confidence > 60%), not contamination
+                    pass
+            
+            # Add to insights
+            self.insights_data['items'].append({
+                'item': item_name,
+                'preferred_bin': preferred_bin_type,
+                'actual_bin': actual_bin_type,
+                'timestamp': time.time(),
+                'contaminated': is_contaminated
+            })
+            
+            # Update bin counts
+            if actual_bin_type in self.insights_data['bin_counts']:
+                self.insights_data['bin_counts'][actual_bin_type] += 1
+            else:
+                # Initialize if bin type not in tracking
+                self.insights_data['bin_counts'][actual_bin_type] = 1
+                if actual_bin_type not in self.insights_data['contamination']:
+                    self.insights_data['contamination'][actual_bin_type] = {
+                        'wrong_items': [],
+                        'total_items': 0
+                    }
+            
+            # Update contamination tracking
+            if actual_bin_type in self.insights_data['contamination']:
+                self.insights_data['contamination'][actual_bin_type]['total_items'] += 1
+                # Only mark as contamination if:
+                # 1. Item is explicitly marked as contaminated (no bin available)
+                # 2. Item went to wrong bin AND it's not an acceptable alternative
+                if is_contaminated:
+                    # No bin available - definitely contamination
+                    self.insights_data['contamination'][actual_bin_type]['wrong_items'].append({
+                        'item': item_name,
+                        'should_be_in': preferred_bin_type
+                    })
+                elif preferred_bin_type != actual_bin_type and preferred_bin_type and not alternative_bin:
+                    # Item went to different bin and it's NOT an acceptable alternative
+                    # This means the system classified it incorrectly - contamination
+                    self.insights_data['contamination'][actual_bin_type]['wrong_items'].append({
+                        'item': item_name,
+                        'should_be_in': preferred_bin_type
+                    })
+                # If alternative_bin exists, it means confidence > 60% - acceptable, not contamination
+        
+        # Save insights data
+        self.save_insights_data()
         
         # Set cooldown timestamp AFTER successful classification
         # This allows new detections after a short cooldown

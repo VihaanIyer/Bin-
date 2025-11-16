@@ -17,6 +17,8 @@ node_modules/
 package-lock.json
 uploads/
 bin_layout_*.json
+insights_data.json
+reload_signal.txt
 __pycache__/
 *.pyc
 

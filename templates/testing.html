@@ -166,6 +166,128 @@
             cursor: not-allowed;
             transform: none;
         }
+        
+        /* Insights Section */
+        .insights-section {
+            margin-bottom: 32px;
+            text-align: left;
+        }
+        
+        .insights-title {
+            color: rgb(2, 3, 3);
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        
+        .bins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .bin-card {
+            background: white;
+            border-radius: 16px;
+            padding: 16px;
+            border: 2px solid rgb(107, 125, 141);
+            box-shadow: 0 2px 8px rgba(41, 50, 40, 0.1);
+            text-align: center;
+        }
+        
+        .bin-label {
+            color: rgb(41, 50, 40);
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-transform: capitalize;
+        }
+        
+        .bin-visual {
+            position: relative;
+            width: 80px;
+            height: 100px;
+            margin: 0 auto 8px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            border: 3px solid rgb(107, 125, 141);
+            overflow: hidden;
+        }
+        
+        .bin-fill {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, currentColor, currentColor);
+            transition: height 0.5s ease-out;
+            border-radius: 0 0 5px 5px;
+        }
+        
+        .bin-fill.recycling { color: #2563eb; }
+        .bin-fill.compost { color: #16a34a; }
+        .bin-fill.landfill { color: #374151; }
+        
+        .bin-percentage {
+            color: rgb(2, 3, 3);
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .bin-count {
+            color: rgb(107, 125, 141);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .contamination-indicator {
+            margin-top: 8px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .contamination-indicator.clean {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .contamination-indicator.warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .contamination-indicator.contaminated {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .stats-summary {
+            background: rgb(243, 243, 233);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 16px;
+            border: 2px solid rgb(107, 125, 141);
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .stat-label {
+            color: rgb(107, 125, 141);
+        }
+        
+        .stat-value {
+            color: rgb(2, 3, 3);
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -193,6 +315,20 @@
                 <div class="info-text">
                     💡 The camera window should be open on your laptop.<br><br>
                     Show different trash items to see the AI classification in action!
+                </div>
+            </div>
+            
+            <!-- Insights Section -->
+            <div class="insights-section">
+                <div class="insights-title">📊 Bin Insights</div>
+                <div class="bins-grid" id="binsGrid">
+                    <!-- Bins will be populated by JavaScript -->
+                </div>
+                <div class="stats-summary" id="statsSummary">
+                    <div class="stat-row">
+                        <span class="stat-label">Total Items Classified:</span>
+                        <span class="stat-value" id="totalItems">0</span>
+                    </div>
                 </div>
             </div>
             
@@ -247,6 +383,104 @@
                 btn.textContent = 'Stop';
             }
         }
+        
+        // Insights polling
+        let insightsInterval = null;
+        
+        function updateInsights() {
+            try {
+                const location = currentLocation;
+                const totalItemsEl = document.getElementById('totalItems');
+                const binsGrid = document.getElementById('binsGrid');
+                
+                if (!totalItemsEl || !binsGrid) {
+                    console.warn('Insights elements not found, skipping update');
+                    return;
+                }
+                
+                fetch(`/insights?location=${location}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.error) {
+                            console.error('Insights error:', data.error);
+                            return;
+                        }
+                        
+                        // Update total items
+                        if (totalItemsEl) {
+                            totalItemsEl.textContent = data.total_items || 0;
+                        }
+                        
+                        // Update bins grid
+                        if (binsGrid) {
+                            binsGrid.innerHTML = '';
+                            
+                            if (data.bins && data.bins.length > 0) {
+                                data.bins.forEach(bin => {
+                                    const binCard = document.createElement('div');
+                                    binCard.className = 'bin-card';
+                                    
+                                    // Determine contamination status
+                                    let contaminationClass = 'clean';
+                                    let contaminationText = 'Clean';
+                                    if (bin.contamination_percentage > 20) {
+                                        contaminationClass = 'contaminated';
+                                        contaminationText = `${bin.contamination_percentage}% contaminated`;
+                                    } else if (bin.contamination_percentage > 0) {
+                                        contaminationClass = 'warning';
+                                        contaminationText = `${bin.contamination_percentage}% contaminated`;
+                                    }
+                                    
+                                    binCard.innerHTML = `
+                                        <div class="bin-label">${bin.label || bin.type}</div>
+                                        <div class="bin-visual">
+                                            <div class="bin-fill ${bin.type}" style="height: ${bin.fill_percentage}%"></div>
+                                        </div>
+                                        <div class="bin-percentage">${bin.fill_percentage}%</div>
+                                        <div class="bin-count">${bin.item_count} items</div>
+                                        <div class="contamination-indicator ${contaminationClass}">
+                                            ${contaminationText}
+                                        </div>
+                                    `;
+                                    
+                                    binsGrid.appendChild(binCard);
+                                });
+                            } else {
+                                binsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: rgb(107, 125, 141); padding: 20px;">No bins configured yet</div>';
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching insights:', error);
+                        // Don't show error to user, just log it
+                    });
+            } catch (error) {
+                console.error('Error in updateInsights:', error);
+            }
+        }
+        
+        // Start polling insights every 2 seconds (only after page is loaded)
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                insightsInterval = setInterval(updateInsights, 2000);
+                updateInsights(); // Initial load
+            });
+        } else {
+            insightsInterval = setInterval(updateInsights, 2000);
+            updateInsights(); // Initial load
+        }
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (insightsInterval) {
+                clearInterval(insightsInterval);
+            }
+        });
     </script>
 </body>
 </html>

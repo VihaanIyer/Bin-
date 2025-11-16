@@ -6,6 +6,7 @@ import json
 import time
 import subprocess
 import sys
+import socket
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -208,6 +209,96 @@ def setup_bins():
         traceback.print_exc()
         return jsonify({'error': f'Error saving configuration: {str(e)}'}), 500
 
+@app.route('/insights', methods=['GET'])
+def get_insights():
+    """Get real-time insights data from main system"""
+    try:
+        insights_file = Path("insights_data.json")
+        data = {
+            'items': [],
+            'bin_counts': {},
+            'contamination': {},
+            'start_time': time.time()
+        }
+        
+        if insights_file.exists():
+            try:
+                with open(insights_file, 'r') as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Error reading insights file: {e}, using empty data")
+                data = {
+                    'items': [],
+                    'bin_counts': {},
+                    'contamination': {},
+                    'start_time': time.time()
+                }
+                
+        # Calculate fill percentages and contamination
+        location = request.args.get('location', 'atlanta_ga_usa')
+        location_file = f"bin_layout_{location}.json"
+        
+        bins_config = []
+        if os.path.exists(location_file):
+            try:
+                with open(location_file, 'r') as f:
+                    config = json.load(f)
+                    bins_config = config.get('bins', [])
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Error reading bin layout file: {e}")
+                bins_config = []
+        
+        # Process insights for each bin
+        insights = {
+            'bins': [],
+            'total_items': len(data.get('items', [])),
+            'timestamp': time.time()
+        }
+        
+        for bin_info in bins_config:
+            bin_type = bin_info.get('type', '').lower()
+            bin_color = bin_info.get('color', 'unknown')
+            bin_label = bin_info.get('label', bin_type)
+            
+            item_count = data.get('bin_counts', {}).get(bin_type, 0)
+            contamination_data = data.get('contamination', {}).get(bin_type, {
+                'wrong_items': [],
+                'total_items': 0
+            })
+            
+            # Calculate fill percentage (assuming max 100 items per bin for demo)
+            max_capacity = 100
+            fill_percentage = min((item_count / max_capacity) * 100, 100)
+            
+            # Calculate contamination percentage
+            total_in_bin = contamination_data.get('total_items', 0)
+            wrong_items = len(contamination_data.get('wrong_items', []))
+            contamination_percentage = 0
+            if total_in_bin > 0:
+                contamination_percentage = (wrong_items / total_in_bin) * 100
+            
+            insights['bins'].append({
+                'type': bin_type,
+                'label': bin_label,
+                'color': bin_color,
+                'item_count': item_count,
+                'fill_percentage': round(fill_percentage, 1),
+                'contamination_percentage': round(contamination_percentage, 1),
+                'wrong_items': contamination_data.get('wrong_items', [])
+            })
+        
+        return jsonify(insights)
+    except Exception as e:
+        print(f"Error getting insights: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'bins': [],
+            'total_items': 0,
+            'timestamp': time.time()
+        }), 500
+
 @app.route('/start', methods=['POST'])
 def start_main_system():
     """Start the main.py system"""
@@ -308,7 +399,8 @@ current_testing_location = None
 def testing_page():
     """Show testing in progress page"""
     global current_testing_location
-    return render_template('testing.html', location=current_testing_location)
+    location = current_testing_location or 'atlanta_ga_usa'
+    return render_template('testing.html', location=location)
 
 @app.route('/stop', methods=['POST'])
 def stop_main_system():
@@ -369,8 +461,6 @@ def stop_main_system():
         return jsonify({'error': f'Error: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    import socket
-    
     def find_free_port(start_port=8080):
         """Find a free port starting from start_port"""
         for port in range(start_port, start_port + 100):
