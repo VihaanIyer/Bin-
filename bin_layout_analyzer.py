@@ -57,14 +57,34 @@ class BinLayoutAnalyzer:
                     return None
         return None
 
-    def _analyze_image(self, image: Image.Image) -> Dict[str, Any]:
+    def _analyze_image(self, image: Image.Image, expected_bins: list = None) -> Dict[str, Any]:
         """
         Analyze a PIL Image and return parsed bin metadata.
         Internal method that accepts a PIL Image directly.
+        
+        Args:
+            image: PIL Image to analyze
+            expected_bins: Optional list of currently configured bins. If provided, only look for these bins.
         """
-        prompt = """
-You are inspecting a single photo of several waste/garbage bins. Your goal is to read the labels, signage, icons, and color cues so that a downstream system knows what each bin is meant for.
+        # Build prompt with expected bins context if provided
+        expected_bins_context = ""
+        if expected_bins and len(expected_bins) > 0:
+            bin_descriptions = []
+            for bin_info in expected_bins:
+                bin_type = bin_info.get('type', 'unknown')
+                bin_color = bin_info.get('color', 'unknown')
+                bin_descriptions.append(f"- {bin_type} bin (color: {bin_color})")
+            expected_bins_context = f"""
+IMPORTANT: You should ONLY identify bins that match the currently configured bins:
+{chr(10).join(bin_descriptions)}
 
+If a bin in the image doesn't match any of these, DO NOT include it in your response.
+Only identify bins that correspond to the configured bins above.
+"""
+        
+        prompt = f"""
+You are inspecting a single photo of several waste/garbage bins. Your goal is to read the labels, signage, icons, and color cues so that a downstream system knows what each bin is meant for.
+{expected_bins_context}
 Instructions:
 - Identify every distinct bin you see (usually 2-6). Work roughly left-to-right.
 - For each bin, infer:
@@ -79,9 +99,9 @@ Keep the JSON compact. Do NOT include full paragraphs of text.
 
 Respond with STRICT JSON using this compact schema (no markdown, no prose):
 
-{
+{{
   "bins": [
-    {
+    {{
       "id": 0,                       // integer index, left-to-right
       "label": "left_black",         // short nickname
       "type": "landfill|compost|recycling|paper|mixed|e-waste|unknown",
@@ -89,10 +109,10 @@ Respond with STRICT JSON using this compact schema (no markdown, no prose):
       "color": "short color phrase",
       "sign": "very short summary of main signage",
       "conf": 0.0
-    }
+    }}
   ],
   "scene": "short summary of the overall lineup"
-}
+}}
 
 Return valid JSON only.
         """.strip()

@@ -1,26 +1,7 @@
 {
-  "bins": [
-    {
-      "id": 0,
-      "label": "blue_bin",
-      "type": "recycling",
-      "color": "blue",
-      "sign": "recycling symbol",
-      "pos": "second_from_left",
-      "conf": 1
-    },
-    {
-      "id": 1,
-      "label": "green_bin",
-      "type": "recycling",
-      "color": "green",
-      "sign": "Emory Recycles",
-      "pos": "rightmost",
-      "conf": 1
-    }
-  ],
+  "bins": [],
+  "scene": "A person sitting in a chair in an office.",
+  "raw_response": "{\n  \"bins\": [],\n  \"scene\": \"A person sitting in a chair in an office.\"\n}",
   "location": "atlanta_ga_usa",
-  "location_name": "Atlanta, GA, USA",
-  "scene": "Several waste bins in an indoor setting.",
-  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"blue_bin\",\n      \"type\": \"recycling\",\n      \"pos\": \"second_from_left\",\n      \"color\": \"blue\",\n      \"sign\": \"recycling symbol\",\n      \"conf\": 0.8\n    },\n    {\n      \"id\": 1,\n      \"label\": \"green_bin\",\n      \"type\": \"recycling\",\n      \"pos\": \"rightmost\",\n      \"color\": \"green\",\n      \"sign\": \"Emory Recycles\",\n      \"conf\": 0.9\n    }\n  ],\n  \"scene\": \"Several waste bins in an indoor setting.\"\n}"
+  "location_name": "Atlanta, GA, USA"
 }

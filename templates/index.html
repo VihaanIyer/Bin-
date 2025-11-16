@@ -2,114 +2,189 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bin Layout Configuration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Bin Setup</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: rgb(164, 194, 157); /* Sage Green */
             min-height: 100vh;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        /* Loading Screen */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgb(164, 194, 157);
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
-            padding: 20px;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out;
         }
         
-        .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            padding: 40px;
-            max-width: 600px;
-            width: 100%;
+        .loading-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
         }
         
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
+        .recycling-spinner {
+            width: 80px;
+            height: 80px;
+            border: 6px solid rgb(107, 125, 141);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: recycle-spin 1s linear infinite;
+            position: relative;
         }
         
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
+        .recycling-spinner::before {
+            content: '♻️';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 32px;
         }
         
-        .form-group {
-            margin-bottom: 25px;
+        @keyframes recycle-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         
-        label {
-            display: block;
+        /* App Container */
+        .app-container {
+            max-width: 428px;
+            margin: 0 auto;
+            background: rgb(243, 243, 233);
+            min-height: 100vh;
+            position: relative;
+            box-shadow: 0 0 30px rgba(41, 50, 40, 0.2);
+        }
+        
+        /* Header */
+        .app-header {
+            background: rgb(164, 194, 157);
+            padding: 50px 20px 20px 20px;
+            padding-top: max(50px, env(safe-area-inset-top));
+            border-bottom: 1px solid rgba(41, 50, 40, 0.1);
+        }
+        
+        .school-name {
+            color: rgb(2, 3, 3);
+            font-size: 18px;
+            font-weight: 700;
             margin-bottom: 8px;
-            color: #333;
-            font-weight: 600;
+        }
+        
+        .app-title {
+            color: rgb(2, 3, 3);
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .app-subtitle {
+            color: rgb(107, 125, 141);
             font-size: 14px;
+            font-weight: 400;
+        }
+        
+        /* Content */
+        .app-content {
+            padding: 24px 20px;
+            padding-bottom: max(24px, env(safe-area-inset-bottom));
+        }
+        
+        .step-indicator {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 32px;
+            justify-content: center;
+        }
+        
+        .step-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgb(107, 125, 141);
+            transition: all 0.3s;
+        }
+        
+        .step-dot.active {
+            width: 24px;
+            border-radius: 4px;
+            background: rgb(41, 50, 40);
+        }
+        
+        .form-section {
+            margin-bottom: 32px;
+        }
+        
+        .section-label {
+            color: rgb(2, 3, 3);
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: block;
+        }
+        
+        .select-wrapper {
+            position: relative;
         }
         
         select {
             width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
+            padding: 16px 20px;
+            border: 2px solid rgb(107, 125, 141);
+            border-radius: 12px;
             font-size: 16px;
             background: white;
+            color: rgb(2, 3, 3);
             cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        select:hover {
-            border-color: #667eea;
+            transition: all 0.2s;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236B7D8D' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 20px center;
+            padding-right: 50px;
         }
         
         select:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: rgb(41, 50, 40);
+            box-shadow: 0 0 0 4px rgba(41, 50, 40, 0.1);
         }
         
-        .file-upload {
-            position: relative;
-            display: inline-block;
-            width: 100%;
-        }
-        
-        .file-upload input[type="file"] {
-            position: absolute;
-            opacity: 0;
-            width: 100%;
-            height: 100%;
-            cursor: pointer;
-        }
-        
-        .file-upload-label {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 40px;
-            border: 3px dashed #e0e0e0;
-            border-radius: 10px;
-            background: #f9f9f9;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-align: center;
-        }
-        
-        .file-upload-label:hover {
-            border-color: #667eea;
-            background: #f0f4ff;
+        /* Camera Section */
+        .camera-section {
+            margin-bottom: 32px;
         }
         
         .camera-container {
             width: 100%;
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            background: rgb(2, 3, 3);
+            min-height: 400px;
+            margin-bottom: 16px;
         }
         
         .camera-placeholder {
@@ -117,74 +192,175 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 40px;
-            border: 3px dashed #e0e0e0;
-            border-radius: 10px;
-            background: #f9f9f9;
+            padding: 60px 20px;
             text-align: center;
-        }
-        
-        .camera-btn {
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            margin-top: 15px;
+            min-height: 400px;
         }
         
-        .camera-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        .camera-placeholder-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.7;
         }
         
-        .camera-btn.primary {
-            background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
-        }
-        
-        .file-icon {
-            font-size: 48px;
-            margin-bottom: 10px;
-        }
-        
-        .file-text {
-            color: #666;
-            font-size: 14px;
-        }
-        
-        button {
-            width: 100%;
-            padding: 15px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 10px;
+        .camera-placeholder-text {
             font-size: 16px;
+            opacity: 0.8;
+            line-height: 1.5;
+        }
+        
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: rgb(2, 3, 3);
+        }
+        
+        canvas {
+            display: none;
+        }
+        
+        .camera-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 24px;
+            background: linear-gradient(to top, rgba(2, 3, 3, 0.8) 0%, transparent 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .capture-button {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: white;
+            border: 5px solid rgb(107, 125, 141);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 20px rgba(41, 50, 40, 0.4);
+            touch-action: manipulation;
+        }
+        
+        .capture-button:active {
+            transform: scale(0.9);
+        }
+        
+        .capture-button-inner {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid rgb(243, 243, 233);
+        }
+        
+        .camera-controls {
+            display: none;
+            flex-direction: row;
+            gap: 12px;
+            width: 100%;
+            justify-content: center;
+        }
+        
+        .camera-controls.active {
+            display: flex;
+        }
+        
+        .btn-retake, .btn-continue {
+            flex: 1;
+            max-width: 160px;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
-            margin-top: 10px;
+            transition: all 0.2s;
+            touch-action: manipulation;
         }
         
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        .btn-retake {
+            background: rgb(107, 125, 141);
+            color: white;
         }
         
-        button:disabled {
-            opacity: 0.6;
+        .btn-retake:active {
+            transform: scale(0.98);
+            background: rgb(41, 50, 40);
+        }
+        
+        .btn-continue {
+            background: rgb(41, 50, 40);
+            color: white;
+        }
+        
+        .btn-continue:active {
+            transform: scale(0.98);
+            background: rgb(2, 3, 3);
+        }
+        
+        .preview-container {
+            display: none;
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .preview-container.active {
+            display: block;
+        }
+        
+        .preview-image {
+            width: 100%;
+            display: block;
+            border: 3px solid rgb(41, 50, 40);
+            border-radius: 16px;
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            width: 100%;
+            padding: 18px;
+            background: rgb(41, 50, 40);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 17px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+            display: none;
+            touch-action: manipulation;
+        }
+        
+        .btn-primary.active {
+            display: block;
+        }
+        
+        .btn-primary:active {
+            transform: scale(0.98);
+            background: rgb(2, 3, 3);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
             cursor: not-allowed;
             transform: none;
         }
         
+        /* Loading State */
         .loading {
             display: none;
             text-align: center;
-            margin-top: 20px;
+            padding: 32px 20px;
         }
         
         .loading.active {
@@ -192,13 +368,13 @@
         }
         
         .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+            border: 3px solid rgb(243, 243, 233);
+            border-top: 3px solid rgb(41, 50, 40);
             border-radius: 50%;
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 15px;
+            margin: 0 auto 16px;
         }
         
         @keyframes spin {
@@ -206,191 +382,260 @@
             100% { transform: rotate(360deg); }
         }
         
+        .loading-text {
+            color: rgb(107, 125, 141);
+            font-size: 15px;
+        }
+        
+        /* Results */
         .result {
             display: none;
-            margin-top: 30px;
+            margin-top: 24px;
             padding: 20px;
-            background: #f1f8f4;
-            border-radius: 10px;
-            border-left: 4px solid #4caf50;
+            background: white;
+            border-radius: 16px;
+            border: 2px solid rgb(107, 125, 141);
         }
         
         .result.active {
             display: block;
         }
         
-        .result h3 {
-            color: #4caf50;
-            margin-bottom: 15px;
+        .result-title {
+            color: rgb(41, 50, 40);
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 12px;
         }
         
-        .result.error {
-            background: #fff5f5;
-            border-left-color: #f44336;
-        }
-        
-        .result.error h3 {
-            color: #f44336;
-        }
-        
-        .bin-list {
-            margin-top: 15px;
-        }
-        
-        .bin-item {
-            background: white;
-            padding: 12px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            border-left: 3px solid #667eea;
-        }
-        
-        .bin-item strong {
-            color: #333;
-        }
-        
-        .bin-item span {
-            color: #666;
-            font-size: 14px;
+        .result-content {
+            color: rgb(2, 3, 3);
+            font-size: 15px;
+            line-height: 1.6;
         }
         
         .editable-bin {
-            background: white;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 8px;
-            border: 2px solid #e0e0e0;
-            transition: all 0.3s;
-        }
-        
-        .editable-bin:hover {
-            border-color: #667eea;
-        }
-        
-        .editable-bin.editing {
-            border-color: #4caf50;
-            box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+            background: rgb(243, 243, 233);
+            padding: 16px;
+            margin-bottom: 12px;
+            border-radius: 12px;
+            border: 2px solid rgb(107, 125, 141);
         }
         
         .bin-field {
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         
         .bin-field label {
             display: block;
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 5px;
+            font-size: 13px;
+            color: rgb(107, 125, 141);
+            margin-bottom: 6px;
             font-weight: 500;
         }
         
         .bin-field input,
         .bin-field select {
             width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            font-size: 14px;
+            padding: 12px 16px;
+            border: 1px solid rgb(107, 125, 141);
+            border-radius: 8px;
+            font-size: 15px;
+            color: rgb(2, 3, 3);
+            background: white;
+        }
+        
+        .bin-field select {
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236B7D8D' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            padding-right: 40px;
         }
         
         .bin-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
+            margin-top: 12px;
         }
         
         .btn-remove {
             background: #f44336;
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
+            padding: 10px 20px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 600;
-        }
-        
-        .btn-remove:hover {
-            background: #d32f2f;
+            width: 100%;
         }
         
         .btn-setup {
-            background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+            background: rgb(41, 50, 40);
             color: white;
             border: none;
-            padding: 15px 30px;
-            border-radius: 10px;
-            font-size: 16px;
+            padding: 18px;
+            border-radius: 12px;
+            font-size: 17px;
             font-weight: 600;
             cursor: pointer;
             margin-top: 20px;
             width: 100%;
+            touch-action: manipulation;
         }
         
-        .btn-setup:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(76, 175, 80, 0.3);
+        .btn-setup:active {
+            transform: scale(0.98);
+            background: rgb(2, 3, 3);
         }
         
         .btn-setup:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+        
+        /* Success/Error Messages */
+        .message-box {
+            padding: 16px;
+            border-radius: 12px;
+            margin-top: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        .message-box.success {
+            background: rgb(243, 243, 233);
+            border-left: 4px solid rgb(41, 50, 40);
+            color: rgb(41, 50, 40);
+        }
+        
+        .message-box.error {
+            background: #fff5f5;
+            border-left: 4px solid #f44336;
+            color: #f44336;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🗑️ Bin Layout Configuration</h1>
-        <p class="subtitle">Upload an image of your bin layout and select your location</p>
-        
-        <form id="uploadForm" enctype="multipart/form-data">
-            <div class="form-group">
-                <label for="location">Select Location</label>
-                <select id="location" name="location" required>
-                    <option value="">Choose a location...</option>
-                    {% for key, name in locations.items() %}
-                    <option value="{{ key }}">{{ name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label>Take Photo of Bin Layout</label>
-                <div class="camera-container">
-                    <video id="video" autoplay playsinline style="display: none; width: 100%; border-radius: 10px; background: #000;"></video>
-                    <canvas id="canvas" style="display: none;"></canvas>
-                    <div id="cameraPlaceholder" class="camera-placeholder">
-                        <div class="file-icon">📷</div>
-                        <div class="file-text">Click to take a photo of your bin layout</div>
-                        <button type="button" id="startCameraBtn" class="camera-btn">Start Camera</button>
-                    </div>
-                    <div id="cameraControls" style="display: none; margin-top: 15px; text-align: center;">
-                        <button type="button" id="captureBtn" class="camera-btn primary">📸 Capture Photo</button>
-                        <button type="button" id="retakeBtn" class="camera-btn" style="margin-left: 10px;">🔄 Retake</button>
-                    </div>
-                    <div id="previewContainer" style="display: none; margin-top: 15px;">
-                        <img id="previewImage" style="width: 100%; border-radius: 10px; border: 3px solid #4caf50;">
-                        <p style="text-align: center; color: #4caf50; margin-top: 10px; font-weight: 600;">Photo captured! Ready to analyze.</p>
-                    </div>
-                </div>
-            </div>
-            
-            <button type="submit" id="submitBtn">Analyze Bin Layout</button>
-        </form>
-        
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Analyzing bin layout with AI...</p>
+    <!-- Loading Screen -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="recycling-spinner"></div>
+        <p style="color: rgb(2, 3, 3); margin-top: 20px; font-weight: 600; font-size: 16px;">Loading...</p>
+    </div>
+    
+    <div class="app-container">
+        <!-- Header -->
+        <div class="app-header">
+            <div class="school-name" id="schoolName" style="display: none;"></div>
+            <div class="app-title">Bin Setup</div>
+            <div class="app-subtitle">Configure your smart trash system</div>
         </div>
         
-        <div class="result" id="result">
-            <h3 id="resultTitle"></h3>
-            <div id="resultContent"></div>
+        <!-- Content -->
+        <div class="app-content">
+            <!-- Step Indicator -->
+            <div class="step-indicator">
+                <div class="step-dot active"></div>
+                <div class="step-dot"></div>
+                <div class="step-dot"></div>
+            </div>
+            
+            <form id="uploadForm" enctype="multipart/form-data">
+                <!-- Location Selection -->
+                <div class="form-section">
+                    <label class="section-label" for="location">Select Location</label>
+                    <div class="select-wrapper">
+                        <select id="location" name="location" required>
+                            <option value="">Choose a location...</option>
+                            {% for key, name in locations.items() %}
+                            <option value="{{ key }}">{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Camera Section -->
+                <div class="camera-section">
+                    <label class="section-label">Take Photo of Bin Layout</label>
+                    <div class="camera-container">
+                        <video id="video" autoplay playsinline style="display: none;"></video>
+                        <canvas id="canvas" style="display: none;"></canvas>
+                        <div id="cameraPlaceholder" class="camera-placeholder">
+                            <div class="camera-placeholder-icon">📷</div>
+                            <div class="camera-placeholder-text">Requesting camera permission...</div>
+                        </div>
+                        <div class="camera-overlay" id="cameraOverlay" style="display: none;">
+                            <div class="capture-button" id="captureButton">
+                                <div class="capture-button-inner"></div>
+                            </div>
+                        </div>
+                        <div class="camera-controls" id="cameraControls">
+                            <button type="button" class="btn-retake" id="retakeBtn">Retake</button>
+                            <button type="button" class="btn-continue" id="continueBtn">Continue</button>
+                        </div>
+                        <div class="preview-container" id="previewContainer">
+                            <img id="previewImage" class="preview-image">
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-primary" id="submitBtn">Continue</button>
+            </form>
+            
+            <!-- Loading State -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div class="loading-text">Analyzing bin layout with AI...</div>
+            </div>
+            
+            <!-- Results -->
+            <div class="result" id="result">
+                <div class="result-title" id="resultTitle"></div>
+                <div class="result-content" id="resultContent"></div>
+            </div>
         </div>
     </div>
     
     <script>
+        // School names mapping
+        const schoolNames = {
+            'atlanta_ga_usa': 'Emory University Bins',
+            'budapest_hungary': 'Budapesti Műszaki Egyetem',
+            'hong_kong': 'Hong Kong University',
+            'singapore': 'National University of Singapore'
+        };
+        
+        // Hide loading screen after page loads
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                document.getElementById('loadingScreen').classList.add('hidden');
+                setTimeout(function() {
+                    document.getElementById('loadingScreen').style.display = 'none';
+                }, 500);
+            }, 1000);
+        });
+        
+        // Update school name when location changes
+        const locationSelect = document.getElementById('location');
+        const schoolNameEl = document.getElementById('schoolName');
+        const stepDots = document.querySelectorAll('.step-dot');
+        
+        locationSelect.addEventListener('change', function() {
+            const location = this.value;
+            if (location && schoolNames[location]) {
+                schoolNameEl.textContent = schoolNames[location];
+                schoolNameEl.style.display = 'block';
+            } else {
+                schoolNameEl.style.display = 'none';
+            }
+            // Update step indicator
+            if (location) {
+                stepDots[0].classList.add('active');
+                stepDots[1].classList.remove('active');
+            }
+        });
+        
         const form = document.getElementById('uploadForm');
         const submitBtn = document.getElementById('submitBtn');
         const loading = document.getElementById('loading');
@@ -401,10 +646,11 @@
         // Camera elements
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
-        const startCameraBtn = document.getElementById('startCameraBtn');
-        const captureBtn = document.getElementById('captureBtn');
+        const captureButton = document.getElementById('captureButton');
         const retakeBtn = document.getElementById('retakeBtn');
+        const continueBtn = document.getElementById('continueBtn');
         const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+        const cameraOverlay = document.getElementById('cameraOverlay');
         const cameraControls = document.getElementById('cameraControls');
         const previewContainer = document.getElementById('previewContainer');
         const previewImage = document.getElementById('previewImage');
@@ -412,12 +658,12 @@
         let stream = null;
         let capturedImageBlob = null;
         
-        // Start camera
-        startCameraBtn.addEventListener('click', async function() {
+        // Start camera immediately on page load
+        async function startCamera() {
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
-                        facingMode: 'environment', // Use back camera on mobile
+                        facingMode: 'environment',
                         width: { ideal: 1280 },
                         height: { ideal: 720 }
                     } 
@@ -425,46 +671,63 @@
                 video.srcObject = stream;
                 video.style.display = 'block';
                 cameraPlaceholder.style.display = 'none';
-                cameraControls.style.display = 'block';
+                cameraOverlay.style.display = 'flex';
             } catch (error) {
-                alert('Error accessing camera: ' + error.message);
+                cameraPlaceholder.innerHTML = `
+                    <div class="camera-placeholder-icon">📷</div>
+                    <div class="camera-placeholder-text">Camera permission denied<br><br>
+                    <button onclick="startCamera()" style="margin-top: 16px; padding: 12px 24px; background: rgb(41, 50, 40); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 600;">Enable Camera</button>
+                    </div>
+                `;
                 console.error('Camera error:', error);
             }
+        }
+        
+        // Start camera when page loads
+        window.addEventListener('load', function() {
+            setTimeout(startCamera, 1200);
         });
         
         // Capture photo
-        captureBtn.addEventListener('click', function() {
+        captureButton.addEventListener('click', function() {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
             
-            // Stop camera stream
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
                 stream = null;
             }
             
-            // Convert to blob
             canvas.toBlob(function(blob) {
                 capturedImageBlob = blob;
                 const imageUrl = URL.createObjectURL(blob);
                 previewImage.src = imageUrl;
                 video.style.display = 'none';
-                cameraControls.style.display = 'none';
-                previewContainer.style.display = 'block';
+                cameraOverlay.style.display = 'none';
+                cameraControls.classList.add('active');
+                previewContainer.classList.add('active');
+                submitBtn.classList.add('active');
+                // Update step indicator
+                stepDots[1].classList.add('active');
             }, 'image/jpeg', 0.95);
         });
         
         // Retake photo
         retakeBtn.addEventListener('click', function() {
-            previewContainer.style.display = 'none';
-            cameraPlaceholder.style.display = 'block';
-            cameraControls.style.display = 'none';
+            previewContainer.classList.remove('active');
+            cameraControls.classList.remove('active');
+            submitBtn.classList.remove('active');
+            cameraPlaceholder.style.display = 'flex';
+            cameraOverlay.style.display = 'none';
             capturedImageBlob = null;
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
+            stepDots[1].classList.remove('active');
+            startCamera();
+        });
+        
+        // Continue button
+        continueBtn.addEventListener('click', function() {
+            form.dispatchEvent(new Event('submit'));
         });
         
         // Handle form submission
@@ -483,12 +746,10 @@
                 return;
             }
             
-            // Show loading
             loading.classList.add('active');
             result.classList.remove('active');
             submitBtn.disabled = true;
             
-            // Create form data with captured image
             const formData = new FormData();
             formData.append('image', capturedImageBlob, 'bin_layout.jpg');
             formData.append('location', location);
@@ -503,6 +764,7 @@
                 
                 if (response.ok) {
                     showSuccess(data);
+                    stepDots[2].classList.add('active');
                 } else {
                     showResult(data.error || 'An error occurred', true);
                 }
@@ -522,18 +784,16 @@
         function showSuccess(data) {
             result.classList.remove('error');
             result.classList.add('active');
-            resultTitle.textContent = '✅ Bins Detected - Edit & Set Up';
+            resultTitle.textContent = '✅ Bins Detected';
             
-            // Store data for editing
-            currentBins = JSON.parse(JSON.stringify(data.bins)); // Deep copy
+            currentBins = JSON.parse(JSON.stringify(data.bins));
             currentLocation = data.location;
             currentScene = data.scene || '';
             currentRawResponse = data.raw_response || '';
             
-            let html = `<p><strong>Location:</strong> ${data.location_name}</p>`;
-            html += `<p><strong>Scene:</strong> ${data.scene || 'N/A'}</p>`;
-            html += `<p><strong>Bins Found:</strong> ${currentBins.length}</p>`;
-            html += `<p style="color: #666; font-size: 13px; margin-top: 10px;">Edit the bins below, remove any you don't have, then click "Set Up" to activate.</p>`;
+            let html = `<p style="margin-bottom: 16px; color: rgb(107, 125, 141); font-size: 14px;"><strong>Location:</strong> ${data.location_name}</p>`;
+            html += `<p style="margin-bottom: 16px; color: rgb(107, 125, 141); font-size: 14px;"><strong>Bins Found:</strong> ${currentBins.length}</p>`;
+            html += `<p style="margin-bottom: 20px; color: rgb(107, 125, 141); font-size: 13px; line-height: 1.5;">Edit the bins below, remove any you don't have, then tap "Set Up" to activate.</p>`;
             
             if (currentBins.length > 0) {
                 html += '<div id="editableBins" style="margin-top: 20px;">';
@@ -544,12 +804,14 @@
             }
             
             html += `<button type="button" id="setupBtn" class="btn-setup">✅ Set Up Bins</button>`;
-            html += `<div id="setupResult" style="margin-top: 15px;"></div>`;
+            html += `<div id="setupResult" style="margin-top: 16px;"></div>`;
             
             resultContent.innerHTML = html;
             
-            // Attach event listeners
             attachBinEventListeners();
+            
+            // Scroll to results
+            result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         
         function createEditableBinHtml(bin, index) {
@@ -627,7 +889,6 @@
         }
         
         async function handleSetup() {
-            // Collect all bin data from form
             const bins = [];
             const binElements = document.querySelectorAll('.editable-bin');
             
@@ -654,7 +915,7 @@
             
             setupBtn.disabled = true;
             setupBtn.textContent = 'Setting up...';
-            setupResult.innerHTML = '<div class="spinner"></div><p>Setting up bins...</p>';
+            setupResult.innerHTML = '<div class="spinner"></div><p style="text-align: center; margin-top: 12px; color: rgb(107, 125, 141);">Setting up bins...</p>';
             
             try {
                 const response = await fetch('/setup', {
@@ -674,31 +935,29 @@
                 
                 if (response.ok) {
                     setupResult.innerHTML = `
-                        <div style="padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
-                            <strong style="color: #2e7d32;">✅ ${data.message}</strong><br>
-                            <p style="margin-top: 10px; font-size: 13px; color: #666;">
-                                The main software has been notified and will reload with ${data.bins_count} bin(s).<br>
-                                You can now show trash to the camera and it will only suggest these bins.
+                        <div class="message-box success">
+                            <strong>✅ ${data.message}</strong><br>
+                            <p style="margin-top: 8px; font-size: 13px;">
+                                The main software has been notified and will reload with ${data.bins_count} bin(s).
                             </p>
-                            <button type="button" id="readyToTestBtn" class="btn-setup" style="margin-top: 15px; background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);">
-                                🚀 Ready to Test - Start Camera System
+                            <button type="button" id="readyToTestBtn" class="btn-setup" style="margin-top: 16px; background: rgb(107, 125, 141);">
+                                🚀 Ready to Test
                             </button>
                         </div>
                     `;
                     setupBtn.textContent = '✅ Set Up Complete!';
                     
-                    // Attach event listener to "Ready to Test" button
                     const readyBtn = document.getElementById('readyToTestBtn');
                     if (readyBtn) {
                         readyBtn.addEventListener('click', handleReadyToTest);
                     }
                 } else {
-                    setupResult.innerHTML = `<p style="color: #f44336;">Error: ${data.error}</p>`;
+                    setupResult.innerHTML = `<div class="message-box error">Error: ${data.error}</div>`;
                     setupBtn.disabled = false;
                     setupBtn.textContent = '✅ Set Up Bins';
                 }
             } catch (error) {
-                setupResult.innerHTML = `<p style="color: #f44336;">Network error: ${error.message}</p>`;
+                setupResult.innerHTML = `<div class="message-box error">Network error: ${error.message}</div>`;
                 setupBtn.disabled = false;
                 setupBtn.textContent = '✅ Set Up Bins';
             }
@@ -711,8 +970,8 @@
             if (!readyBtn) return;
             
             readyBtn.disabled = true;
-            readyBtn.textContent = 'Starting system...';
-            setupResult.innerHTML = '<div class="spinner"></div><p>Starting main system...</p>';
+            readyBtn.textContent = 'Starting...';
+            setupResult.innerHTML = '<div class="spinner"></div><p style="text-align: center; margin-top: 12px; color: rgb(107, 125, 141);">Starting main system...</p>';
             
             try {
                 const response = await fetch('/start', {
@@ -728,27 +987,27 @@
                 const data = await response.json();
                 
                 if (response.ok && data.success) {
-                    // Redirect to testing page
+                    localStorage.setItem('currentLocation', currentLocation);
                     window.location.href = '/testing';
                 } else if (data.already_running) {
                     setupResult.innerHTML = `
-                        <div style="padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
-                            <strong style="color: #f57c00;">⚠️ ${data.message}</strong><br>
-                            <p style="margin-top: 10px; font-size: 13px; color: #666;">
+                        <div class="message-box success">
+                            <strong>⚠️ ${data.message}</strong><br>
+                            <p style="margin-top: 8px; font-size: 13px;">
                                 The main system is already running. It will automatically reload with your new bin configuration.
                             </p>
                         </div>
                     `;
-                    readyBtn.textContent = '✅ System Already Running';
+                    readyBtn.textContent = '✅ System Running';
                 } else {
-                    setupResult.innerHTML = `<p style="color: #f44336;">Error: ${data.error || 'Unknown error'}</p>`;
+                    setupResult.innerHTML = `<div class="message-box error">Error: ${data.error || 'Unknown error'}</div>`;
                     readyBtn.disabled = false;
-                    readyBtn.textContent = '🚀 Ready to Test - Start Camera System';
+                    readyBtn.textContent = '🚀 Ready to Test';
                 }
             } catch (error) {
-                setupResult.innerHTML = `<p style="color: #f44336;">Network error: ${error.message}</p>`;
+                setupResult.innerHTML = `<div class="message-box error">Network error: ${error.message}</div>`;
                 readyBtn.disabled = false;
-                readyBtn.textContent = '🚀 Ready to Test - Start Camera System';
+                readyBtn.textContent = '🚀 Ready to Test';
             }
         }
         
@@ -762,8 +1021,8 @@
             }
             resultContent.innerHTML = `<p>${message}</p>`;
             result.classList.add('active');
+            result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     </script>
 </body>
 </html>
-

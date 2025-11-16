@@ -255,6 +255,8 @@ class SmartTrashBin:
                 try:
                     with open(location_file, 'r') as f:
                         self.bin_layout_metadata = json.load(f)
+                        # Update classifier with bin layout
+                        self.classifier.bin_layout = self.classifier._load_bin_layout()
                         self.classifier.update_bin_context(self.bin_layout_metadata)
                         identified_bins = len(self.bin_layout_metadata.get("bins", [])) if isinstance(self.bin_layout_metadata, dict) else len(self.bin_layout_metadata or [])
                         Logger.log_system_event(f"Loaded {identified_bins} bins from location-specific file: {location_file}")
@@ -280,6 +282,8 @@ class SmartTrashBin:
             cached_layout = BinLayoutAnalyzer.load_cached_bins()
             if cached_layout:
                 self.bin_layout_metadata = cached_layout
+                # Update classifier with bin layout
+                self.classifier.bin_layout = self.classifier._load_bin_layout()
                 self.classifier.update_bin_context(cached_layout)
                 cached_bins = len(cached_layout.get("bins", [])) if isinstance(cached_layout, dict) else len(cached_layout or [])
                 Logger.log_system_event(f"Loaded {cached_bins} bins from bin_layout_metadata.json.")
@@ -349,6 +353,33 @@ class SmartTrashBin:
         print("="*80)
         print("Controls: 'q' to quit")
         print("="*80 + "\n")
+    
+    def _find_closest_bin(self, bin_type: str):
+        """
+        Find the closest available bin type to the requested bin type.
+        Returns bin info dict or None.
+        """
+        if not self.bin_layout_metadata or not self.bin_layout_metadata.get("bins"):
+            return None
+        
+        # Simple mapping: recycling -> compost -> landfill (fallback order)
+        fallback_map = {
+            "recycling": ["compost", "landfill"],
+            "compost": ["recycling", "landfill"],
+            "landfill": ["recycling", "compost"],
+        }
+        
+        available_types = [bin_info.get("type", "").lower() for bin_info in self.bin_layout_metadata.get("bins", [])]
+        
+        # Check fallback options
+        for fallback_type in fallback_map.get(bin_type.lower(), []):
+            if fallback_type in available_types:
+                # Find the bin info
+                for bin_info in self.bin_layout_metadata.get("bins", []):
+                    if bin_info.get("type", "").lower() == fallback_type:
+                        return bin_info
+        
+        return None
     
     def reload_bin_layout(self):
         """
@@ -825,24 +856,54 @@ class SmartTrashBin:
         
         # Helper function to get bin name, color, and position
         def get_bin_info(item):
-            # Handle items with no bin available
-            if item.get('no_bin_available'):
-                # Return preferred bin info for display
-                bin_name = item.get('bin_name', 'bin')
-                bin_color = item.get('bin_color', 'N/A')
-                bin_position = item.get('bin_position', None)
-                return bin_name, bin_color, bin_position
+            # Check if bin is available
+            bin_available = item.get('bin_available', True)
+            alternative_bin = item.get('alternative_bin')
             
+            # If bin is not available and we have an alternative
+            if not bin_available and alternative_bin:
+                # Return alternative bin info
+                return (
+                    alternative_bin.get('bin_name', 'bin'),
+                    alternative_bin.get('bin_color', 'N/A'),
+                    alternative_bin.get('bin_position', None),
+                    True,  # is_alternative
+                    item.get('bin_type'),  # preferred_bin_type
+                    item.get('bin_name'),  # preferred_bin_name
+                )
+            elif not bin_available:
+                # No alternative found - return preferred bin info (will need to find closest)
+                preferred_type = item.get('bin_type', 'landfill')
+                preferred_name = item.get('bin_name', 'bin')
+                return (
+                    preferred_name,
+                    item.get('bin_color', get_bin_color(preferred_type)),
+                    item.get('bin_position', None),
+                    False,  # is_alternative
+                    preferred_type,  # preferred_bin_type
+                    preferred_name,  # preferred_bin_name
+                )
+            
+            # Bin is available - normal case
             bin_type = item.get('bin_type')
             if not bin_type:
-                bin_name = item.get('bin_name', 'bin')
-                bin_color = item.get('bin_color', 'N/A')
-                bin_position = item.get('bin_position', None)
+                return (
+                    item.get('bin_name', item.get('bin_type', 'bin')),
+                    item.get('bin_color', get_bin_color(bin_type)),
+                    item.get('bin_position', None),
+                    False,  # is_alternative
+                    None,  # preferred_bin_type
+                    None,  # preferred_bin_name
+                )
             else:
-                bin_name = item.get('bin_name', item.get('bin_type', 'bin'))
-                bin_color = item.get('bin_color', get_bin_color(bin_type))
-                bin_position = item.get('bin_position', None)
-            return bin_name, bin_color, bin_position
+                return (
+                    item.get('bin_name', 'bin'),
+                    item.get('bin_color', 'N/A'),
+                    item.get('bin_position', None),
+                    False,  # is_alternative
+                    None,  # preferred_bin_type
+                    None,  # preferred_bin_name
+                )
         
         # Store spoken text for "repeat" functionality
         self.last_spoken_text = []
@@ -850,9 +911,32 @@ class SmartTrashBin:
         if len(classifications) == 1:
             # Single item - combine with closing message for no break
             item = classifications[0]
-            bin_name, bin_color, bin_position = get_bin_info(item)
-            # Use format: "item goes into [color] bin_name position"
-            response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
+            bin_info = get_bin_info(item)
+            bin_name, bin_color, bin_position, is_alternative, preferred_type, preferred_name = bin_info
+            
+            # Format response based on whether it's an alternative
+            if is_alternative:
+                if self.language == "hungarian":
+                    response = f"{item['item']} általában a {preferred_name} kukába megy, de mivel az nem elérhető, mehet a {bin_color} {bin_name} {bin_position or ''} kukába"
+                else:
+                    response = f"{item['item']} should go into {preferred_name}, but since it's not available, it can go into {bin_color} {bin_name} {bin_position or ''}"
+            elif not item.get('bin_available', True):
+                # No alternative found - need to find closest bin
+                closest_bin = self._find_closest_bin(preferred_type)
+                if closest_bin:
+                    if self.language == "hungarian":
+                        response = f"{item['item']} a {preferred_name} kukába megy, de az nem elérhető. Keresse meg a legközelebbi {preferred_name} kukát"
+                    else:
+                        response = f"{item['item']} should go into {preferred_name}, but it's not available. Find the closest {preferred_name} bin"
+                else:
+                    if self.language == "hungarian":
+                        response = f"{item['item']} a {preferred_name} kukába megy, de az nem elérhető"
+                    else:
+                        response = f"{item['item']} should go into {preferred_name}, but it's not available"
+            else:
+                # Normal case - bin is available
+                response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
+            
             closing_msg = get_closing_message(self.language)
             combined_response = f"{response}. {closing_msg}"
             self.last_spoken_text.append(response)
@@ -865,8 +949,32 @@ class SmartTrashBin:
             # Multiple items - combine all into one continuous speech to eliminate gaps
             all_responses = []
             for i, item in enumerate(classifications, 1):
-                bin_name, bin_color, bin_position = get_bin_info(item)
-                response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
+                bin_info = get_bin_info(item)
+                bin_name, bin_color, bin_position, is_alternative, preferred_type, preferred_name = bin_info
+                
+                # Format response based on whether it's an alternative
+                if is_alternative:
+                    if self.language == "hungarian":
+                        response = f"{item['item']} általában a {preferred_name} kukába megy, de mivel az nem elérhető, mehet a {bin_color} {bin_name} {bin_position or ''} kukába"
+                    else:
+                        response = f"{item['item']} should go into {preferred_name}, but since it's not available, it can go into {bin_color} {bin_name} {bin_position or ''}"
+                elif not item.get('bin_available', True):
+                    # No alternative found
+                    closest_bin = self._find_closest_bin(preferred_type)
+                    if closest_bin:
+                        if self.language == "hungarian":
+                            response = f"{item['item']} a {preferred_name} kukába megy, de az nem elérhető. Keresse meg a legközelebbi {preferred_name} kukát"
+                        else:
+                            response = f"{item['item']} should go into {preferred_name}, but it's not available. Find the closest {preferred_name} bin"
+                    else:
+                        if self.language == "hungarian":
+                            response = f"{item['item']} a {preferred_name} kukába megy, de az nem elérhető"
+                        else:
+                            response = f"{item['item']} should go into {preferred_name}, but it's not available"
+                else:
+                    # Normal case
+                    response = format_item_response(item, bin_name, bin_color, bin_position, self.language)
+                
                 self.last_spoken_text.append(response)
                 all_responses.append(response)
             

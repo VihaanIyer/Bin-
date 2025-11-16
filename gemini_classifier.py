@@ -158,9 +158,25 @@ class TrashClassifier:
                 print(f"[TrashClassifier] Error loading bin layout: {e}. Using defaults.")
             return []
 
+    def _get_available_bin_types(self):
+        """
+        Get list of available bin types from current configuration.
+        """
+        if not self.bin_layout:
+            return []
+        return [bin_info.get("type", "").lower() for bin_info in self.bin_layout if bin_info.get("type")]
+    
+    def _is_bin_type_available(self, bin_type: str):
+        """
+        Check if a bin type is currently available in the configuration.
+        """
+        available_types = self._get_available_bin_types()
+        return bin_type.lower() in available_types
+    
     def _build_bin_descriptions_for_prompt(self):
         """
         Return a short, language-appropriate description of bins for prompts.
+        ONLY includes bins that are currently configured.
         """
         if not self.bin_layout:
             if self.language == "hungarian":
@@ -181,6 +197,7 @@ class TrashClassifier:
             color = bin_info.get("color", "")
             sign = bin_info.get("sign", "")
             label = bin_info.get("label", "")
+            pos = bin_info.get("pos", "")
 
             if self.language == "hungarian":
                 type_map = {
@@ -189,9 +206,11 @@ class TrashClassifier:
                     "landfill": "landfill",
                 }  # keep English keywords for parsing, explain around them
                 t_disp = type_map.get(btype, btype)
-                lines.append(f"- {t_disp} ({color}): {sign or label}")
+                pos_text = f" ({pos})" if pos else ""
+                lines.append(f"- {t_disp} ({color}{pos_text}): {sign or label}")
             else:
-                lines.append(f"- {btype or 'bin'} ({color}): {sign or label}")
+                pos_text = f" ({pos})" if pos else ""
+                lines.append(f"- {btype or 'bin'} ({color}{pos_text}): {sign or label}")
         return "\n".join(lines)
 
     def _build_system_prompt(self):
@@ -242,9 +261,154 @@ class TrashClassifier:
             return "black/grey"
         return ""
 
+    def _parse_and_match_position(self, position_raw: str, bin_type: str, bin_color: str):
+        """
+        Parse position from Gemini response and match it to the correct bin in configuration.
+        Uses bin_type AND bin_color to find the exact matching bin.
+        """
+        if not self.bin_layout:
+            # No bin layout, just convert position format
+            return self._convert_position_format(position_raw)
+        
+        b_type = bin_type.lower()
+        b_color = (bin_color or "").lower()
+        
+        # Try to find exact match by type AND color
+        for bin_info in self.bin_layout:
+            bin_info_type = (bin_info.get("type", "") or "").lower()
+            bin_info_color = (bin_info.get("color", "") or "").lower()
+            
+            # Match by type and color (if color is provided)
+            if bin_info_type == b_type:
+                if not b_color or b_color in bin_info_color or bin_info_color in b_color:
+                    pos = bin_info.get("pos") or ""
+                    return self._convert_position_format(pos)
+        
+        # Fallback: if position_raw was provided, use it
+        if position_raw:
+            return self._convert_position_format(position_raw)
+        
+        # Last resort: find first bin of this type
+        for bin_info in self.bin_layout:
+            if (bin_info.get("type", "") or "").lower() == b_type:
+                pos = bin_info.get("pos") or ""
+                return self._convert_position_format(pos)
+        
+        return None
+    
+    def _convert_position_format(self, position: str):
+        """
+        Convert position from JSON format (leftmost, center, rightmost) to spoken format (on the left, in the middle, on the right).
+        Also handles Gemini's direct responses (left, middle, right).
+        """
+        if not position:
+            return None
+        
+        pos_lower = position.lower()
+        
+        if self.language == "hungarian":
+            if "left" in pos_lower or pos_lower == "leftmost":
+                return "bal oldalon"
+            if "center" in pos_lower or "middle" in pos_lower or pos_lower == "középen":
+                return "középen"
+            if "right" in pos_lower or pos_lower == "rightmost":
+                return "jobb oldalon"
+        else:
+            if "left" in pos_lower or pos_lower == "leftmost":
+                return "on the left"
+            if "center" in pos_lower or "middle" in pos_lower:
+                return "in the middle"
+            if "right" in pos_lower or pos_lower == "rightmost":
+                return "on the right"
+        
+        return position
+    
+    def _check_alternative_bin(self, item_name: str, preferred_bin_type: str):
+        """
+        Check if an item can go into an alternative bin when the preferred bin is not available.
+        Returns dict with alternative bin info and confidence, or None if no good alternative.
+        """
+        available_types = self._get_available_bin_types()
+        if not available_types:
+            return None
+        
+        # Don't check if preferred bin is available
+        if self._is_bin_type_available(preferred_bin_type):
+            return None
+        
+        # Build prompt to check compatibility
+        available_bins_desc = self._build_bin_descriptions_for_prompt()
+        
+        if self.language == "hungarian":
+            prompt = f"""A {item_name} általában a {preferred_bin_type} kukába megy, de ez nem elérhető.
+
+Elérhető kukák:
+{available_bins_desc}
+
+Válaszolj JSON formátumban:
+{{
+  "can_go_into_alternative": true/false,
+  "confidence": 0.0-1.0,
+  "alternative_bin_type": "recycling|compost|landfill",
+  "reason": "rövid indoklás"
+}}
+
+Ha a bizalom < 0.6, akkor can_go_into_alternative = false."""
+        else:
+            prompt = f"""The {item_name} normally goes into {preferred_bin_type} bin, but it's not available.
+
+Available bins:
+{available_bins_desc}
+
+Respond in JSON format:
+{{
+  "can_go_into_alternative": true/false,
+  "confidence": 0.0-1.0,
+  "alternative_bin_type": "recycling|compost|landfill",
+  "reason": "short explanation"
+}}
+
+If confidence < 0.6, set can_go_into_alternative = false."""
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "response_mime_type": "application/json",
+                    "temperature": 0.1,
+                    "max_output_tokens": 128,
+                },
+            )
+            
+            import json
+            result = json.loads(response.text)
+            
+            if result.get("can_go_into_alternative") and result.get("confidence", 0) >= 0.6:
+                alt_type = result.get("alternative_bin_type", "").lower()
+                if alt_type in available_types:
+                    # Get bin info for alternative
+                    alt_color = self._get_bin_color_for_type(alt_type)
+                    alt_name = self._get_bin_name_for_type(alt_type)
+                    alt_position = self._get_bin_position_for_type(alt_type)
+                    
+                    return {
+                        "bin_type": alt_type,
+                        "bin_name": alt_name,
+                        "bin_color": alt_color,
+                        "bin_position": alt_position,
+                        "confidence": result.get("confidence", 0.6),
+                        "reason": result.get("reason", ""),
+                    }
+        except Exception as e:
+            if self.DEBUG:
+                print(f"[TrashClassifier] Alternative bin check error: {e}")
+        
+        return None
+    
     def _get_bin_position_for_type(self, bin_type: str):
         """
-        Optional: get approximate bin position (left/middle/right) if encoded in JSON.
+        DEPRECATED: Use _parse_and_match_position instead.
+        Get approximate bin position (left/middle/right) if encoded in JSON.
         """
         if not self.bin_layout:
             return None
@@ -252,22 +416,8 @@ class TrashClassifier:
         b = bin_type.lower()
         for bin_info in self.bin_layout:
             if bin_info.get("type", "").lower() == b:
-                pos = (bin_info.get("pos") or "").lower()
-                if self.language == "hungarian":
-                    if "left" in pos or pos == "leftmost":
-                        return "bal oldalon"
-                    if "center" in pos or "middle" in pos:
-                        return "középen"
-                    if "right" in pos or pos == "rightmost":
-                        return "jobb oldalon"
-                else:
-                    if "left" in pos or pos == "leftmost":
-                        return "on the left"
-                    if "center" in pos or "middle" in pos:
-                        return "in the middle"
-                    if "right" in pos or pos == "rightmost":
-                        return "on the right"
-                return pos or None
+                pos = bin_info.get("pos") or ""
+                return self._convert_position_format(pos)
         return None
 
     def _build_explanation(self, item_name: str, bin_type: str, bin_color: str) -> str:
@@ -627,21 +777,34 @@ Hint: {items_text}"""
                     continue
 
                 bin_color = parts[2] if len(parts) > 2 and parts[2] else self._get_bin_color_for_type(bin_type)
-                position = parts[3] if len(parts) > 3 and parts[3] else self._get_bin_position_for_type(bin_type)
-
+                
+                # Get position from Gemini response, or find matching bin from configuration
+                position_raw = parts[3] if len(parts) > 3 else None
+                position = self._parse_and_match_position(position_raw, bin_type, bin_color)
+                
                 bin_name = self._get_bin_name_for_type(bin_type)
                 explanation = self._build_explanation(item_name, bin_type, bin_color)
-
-                results.append(
-                    {
-                        "item": item_name,
-                        "bin_type": bin_type,
-                        "bin_name": bin_name,
-                        "bin_color": bin_color,
-                        "bin_position": position,
-                        "explanation": explanation,
-                    }
-                )
+                
+                # Check if the bin type is available
+                is_available = self._is_bin_type_available(bin_type)
+                
+                result_item = {
+                    "item": item_name,
+                    "bin_type": bin_type,
+                    "bin_name": bin_name,
+                    "bin_color": bin_color,
+                    "bin_position": position,
+                    "explanation": explanation,
+                    "bin_available": is_available,
+                }
+                
+                # If bin is not available, check for alternatives
+                if not is_available:
+                    alternative = self._check_alternative_bin(item_name, bin_type)
+                    if alternative:
+                        result_item["alternative_bin"] = alternative
+                
+                results.append(result_item)
 
             return results
         except Exception as e:

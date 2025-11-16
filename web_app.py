@@ -76,10 +76,24 @@ def upload_file():
         
         analyzer = BinLayoutAnalyzer(classifier)
         
+        # Check if there's an existing bin configuration for this location
+        # If user is re-taking a picture after editing, only look for currently configured bins
+        expected_bins = None
+        location_file = f"bin_layout_{location}.json"
+        if os.path.exists(location_file):
+            try:
+                with open(location_file, 'r') as f:
+                    existing_config = json.load(f)
+                    expected_bins = existing_config.get('bins', [])
+                    if expected_bins:
+                        print(f"📋 Found existing bin configuration with {len(expected_bins)} bins. Will only identify matching bins.")
+            except Exception as e:
+                print(f"⚠️  Could not load existing bin config: {e}")
+        
         # Analyze the uploaded image
         print(f"Analyzing bin layout from uploaded image...")
         image = Image.open(filepath)
-        result = analyzer._analyze_image(image)
+        result = analyzer._analyze_image(image, expected_bins=expected_bins)
         
         # Add location metadata
         result['location'] = location
@@ -264,8 +278,9 @@ def start_main_system():
             print(f"✅ Started main.py (PID: {process.pid}) with BIN_LOCATION={location}")
             
             # Store the PID globally so we can stop it later
-            global running_process_pid
+            global running_process_pid, current_testing_location
             running_process_pid = process.pid
+            current_testing_location = location
             
             return jsonify({
                 'success': True,
@@ -286,10 +301,14 @@ def start_main_system():
         traceback.print_exc()
         return jsonify({'error': f'Error: {str(e)}'}), 500
 
+# Store current location for testing page
+current_testing_location = None
+
 @app.route('/testing')
 def testing_page():
     """Show testing in progress page"""
-    return render_template('testing.html')
+    global current_testing_location
+    return render_template('testing.html', location=current_testing_location)
 
 @app.route('/stop', methods=['POST'])
 def stop_main_system():
