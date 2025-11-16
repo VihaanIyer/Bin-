@@ -21,4 +21,7 @@ insights_data.json
 reload_signal.txt
 __pycache__/
 *.pyc
+# SSL certificates (self-signed, generated automatically)
+cert.pem
+key.pem
 

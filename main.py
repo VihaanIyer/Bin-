@@ -15,9 +15,10 @@ from gemini_classifier import TrashClassifier
 from tts_handler import TTSHandler
 from voice_input import VoiceInputHandler
 from bin_layout_analyzer import BinLayoutAnalyzer
+from Arduino_Scripts.trash_bin_servo import MultiArduinoServoController
 
 # Modify this when you want to switch cameras (Continuity Cam often shows as index 1 or 2)
-CAMERA_INDEX = 0
+CAMERA_INDEX = 1
 
 
 def get_language_from_location(location):
@@ -323,6 +324,26 @@ class SmartTrashBin:
             self.voice_input = None
             Logger.log_system_event("Voice input disabled - continuing without question support")
         
+        # Initialize Arduino servo controller
+        self.servo_controller = None
+        try:
+            Logger.log_system_event("Initializing Arduino servo controller...")
+            arduino_configs = {
+                'arduino_1': {'port': os.getenv('ARDUINO_1_PORT', '/dev/tty.usbmodem12101')},
+                'arduino_2': {'port': os.getenv('ARDUINO_2_PORT', '/dev/tty.usbmodem12301')}
+            }
+            self.servo_controller = MultiArduinoServoController(arduino_configs)
+            connection_status = self.servo_controller.connect_all()
+            connected_count = sum(1 for status in connection_status.values() if status)
+            if connected_count > 0:
+                Logger.log_system_event(f"Arduino servo controller initialized - {connected_count}/{len(arduino_configs)} Arduinos connected")
+            else:
+                Logger.log_system_event("Arduino servo controller initialized but no Arduinos connected - bin opening disabled")
+        except Exception as e:
+            Logger.log_error(str(e), "ArduinoServoController initialization")
+            self.servo_controller = None
+            Logger.log_system_event("Arduino servo controller disabled - continuing without bin opening")
+        
         # State management
         self.last_detection_time = 0
         self.detection_cooldown = 0.5  # Short cooldown after classification to allow new detections
@@ -585,6 +606,49 @@ class SmartTrashBin:
         self.listening_for_questions = False
         Logger.log_system_event("Question listening period ended")
     
+    def _open_bins_sequentially(self, classifications):
+        """
+        Open bins sequentially based on classifications, in parallel with TTS.
+        Opens bins in order: bin1 -> wait 1.5s -> bin2 -> wait 7s -> close all.
+        
+        Args:
+            classifications: List of classification dicts with 'bin_type' field
+        """
+        if not self.servo_controller:
+            return
+        
+        try:
+            # Extract unique bin_types in order they appear
+            bin_types = []
+            seen = set()
+            for item in classifications:
+                bin_type = item.get('bin_type', '').lower()
+                if bin_type and bin_type not in seen:
+                    bin_types.append(bin_type)
+                    seen.add(bin_type)
+            
+            if not bin_types:
+                return
+            
+            Logger.log_system_event(f"Opening {len(bin_types)} bin(s) sequentially: {', '.join(bin_types)}")
+            
+            # Open bins sequentially with 1.5s delay between each
+            for bin_type in bin_types:
+                self.servo_controller.move_servo_up(bin_type)
+                if bin_type != bin_types[-1]:  # Don't wait after last bin
+                    time.sleep(1.5)
+            
+            # Wait 7 seconds after all bins are open
+            time.sleep(7.0)
+            
+            # Close all bins
+            for bin_type in bin_types:
+                self.servo_controller.move_servo_down(bin_type)
+            
+            Logger.log_system_event("All bins closed")
+        except Exception as e:
+            Logger.log_error(str(e), "Opening bins sequentially")
+    
     def _handle_bag_detection(self):
         """
         Handle detected trash bags by asking user about contents
@@ -725,7 +789,7 @@ class SmartTrashBin:
             
             # Only proceed if YOLOv8 detected objects (excluding person)
             if not yolo_detections or len(yolo_detections) == 0:
-                Logger.log_system_event("No objects detected by YOLOv8 (excluding person). Skipping Gemini Vision.")
+                
                 return
             
             # Log what YOLOv8 detected
@@ -1001,6 +1065,14 @@ class SmartTrashBin:
         # Store spoken text for "repeat" functionality
         self.last_spoken_text = []
         
+        # Start bin opening in parallel thread (runs while TTS speaks)
+        if self.servo_controller and classifications:
+            threading.Thread(
+                target=self._open_bins_sequentially,
+                args=(classifications,),
+                daemon=True
+            ).start()
+        
         if len(classifications) == 1:
             # Single item - combine with closing message for no break
             item = classifications[0]
@@ -1228,6 +1300,8 @@ class SmartTrashBin:
             self.listening_for_questions = False  # Stop listening
             if self.voice_input:
                 self.voice_input.stop_listening()
+            if self.servo_controller:
+                self.servo_controller.disconnect_all()
             print("System shut down successfully.")
 
 
