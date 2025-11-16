@@ -874,12 +874,11 @@ class SmartTrashBin:
             
             if not bin_available:
                 if alternative_bin:
-                    # Item went to alternative bin (acceptable)
+                    # Item went to alternative bin because preferred bin is not available
                     actual_bin_type = alternative_bin.get('bin_type', '').lower()
-                    # Check if this is contamination (wrong bin) or acceptable alternative
-                    if preferred_bin_type != actual_bin_type:
-                        # This is an acceptable alternative, not contamination
-                        pass
+                    # This IS contamination - item doesn't belong in this bin, it's just acceptable
+                    # The bin is no longer 100% clean
+                    is_contaminated = True
                 else:
                     # No bin available - mark as contamination
                     is_contaminated = True
@@ -887,8 +886,8 @@ class SmartTrashBin:
                 # Item went to alternative bin instead of preferred
                 actual_bin_type = alternative_bin.get('bin_type', '').lower()
                 if preferred_bin_type != actual_bin_type:
-                    # This is acceptable alternative (confidence > 60%), not contamination
-                    pass
+                    # This IS contamination - item doesn't belong in this bin
+                    is_contaminated = True
             
             # Add to insights
             self.insights_data['items'].append({
@@ -914,23 +913,14 @@ class SmartTrashBin:
             # Update contamination tracking
             if actual_bin_type in self.insights_data['contamination']:
                 self.insights_data['contamination'][actual_bin_type]['total_items'] += 1
-                # Only mark as contamination if:
-                # 1. Item is explicitly marked as contaminated (no bin available)
-                # 2. Item went to wrong bin AND it's not an acceptable alternative
-                if is_contaminated:
-                    # No bin available - definitely contamination
+                # Mark as contamination if item went to a different bin than preferred
+                # This includes alternative bins - they make the bin "not 100% clean"
+                if is_contaminated or (preferred_bin_type != actual_bin_type and preferred_bin_type):
+                    # Item is in wrong bin (either no bin available or alternative bin)
                     self.insights_data['contamination'][actual_bin_type]['wrong_items'].append({
                         'item': item_name,
                         'should_be_in': preferred_bin_type
                     })
-                elif preferred_bin_type != actual_bin_type and preferred_bin_type and not alternative_bin:
-                    # Item went to different bin and it's NOT an acceptable alternative
-                    # This means the system classified it incorrectly - contamination
-                    self.insights_data['contamination'][actual_bin_type]['wrong_items'].append({
-                        'item': item_name,
-                        'should_be_in': preferred_bin_type
-                    })
-                # If alternative_bin exists, it means confidence > 60% - acceptable, not contamination
         
         # Save insights data
         self.save_insights_data()

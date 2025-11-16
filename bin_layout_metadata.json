@@ -2,34 +2,16 @@
   "bins": [
     {
       "id": 0,
-      "label": "left_gray",
-      "type": "landfill",
-      "color": "light gray",
-      "sign": "landfill",
-      "pos": "leftmost",
-      "conf": 1
-    },
-    {
-      "id": 1,
-      "label": "center_green",
-      "type": "compost",
-      "color": "dark green",
-      "sign": "compost",
-      "pos": "center",
-      "conf": 1
-    },
-    {
-      "id": 2,
-      "label": "right_blue",
+      "label": "blue_recycle",
       "type": "recycling",
-      "color": "royal blue",
-      "sign": "recycle",
-      "pos": "rightmost",
+      "color": "blue",
+      "sign": "recycle: all paper, metal, glass, plastic bottles",
+      "pos": "center",
       "conf": 1
     }
   ],
   "location": "atlanta_ga_usa",
   "location_name": "Atlanta, GA, USA",
-  "scene": "three waste bins in a row",
-  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"left_gray\",\n      \"type\": \"landfill\",\n      \"pos\": \"leftmost\",\n      \"color\": \"light gray\",\n      \"sign\": \"landfill\",\n      \"conf\": 0.9\n    },\n    {\n      \"id\": 1,\n      \"label\": \"center_green\",\n      \"type\": \"compost\",\n      \"pos\": \"center\",\n      \"color\": \"dark green\",\n      \"sign\": \"compost\",\n      \"conf\": 0.9\n    },\n    {\n      \"id\": 2,\n      \"label\": \"right_blue\",\n      \"type\": \"recycling\",\n      \"pos\": \"rightmost\",\n      \"color\": \"royal blue\",\n      \"sign\": \"recycle\",\n      \"conf\": 0.9\n    }\n  ],\n  \"scene\": \"three waste bins in a row\"\n}"
+  "scene": "office setting with a blue recycling bin",
+  "raw_response": "{\n  \"bins\": [\n    {\n      \"id\": 0,\n      \"label\": \"blue_recycle\",\n      \"type\": \"recycling\",\n      \"pos\": \"center\",\n      \"color\": \"blue\",\n      \"sign\": \"recycle: all paper, metal, glass, plastic bottles\",\n      \"conf\": 0.95\n    }\n  ],\n  \"scene\": \"office setting with a blue recycling bin\"\n}"
 }
